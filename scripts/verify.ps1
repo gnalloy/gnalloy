@@ -16,14 +16,14 @@ try {
         throw "gofmt required:`n$formatted"
     }
 
-    go test ./... -count=$Count
+    go test ./... "-count=$Count"
     if ($LASTEXITCODE -ne 0) { throw "go test failed" }
 
     go vet ./...
     if ($LASTEXITCODE -ne 0) { throw "go vet failed" }
 
     if (-not $SkipBench) {
-        go test ./... -run '^$' -bench . -benchmem -benchtime=$Benchtime -count=1
+        go test ./... -run '^$' -bench . -benchmem "-benchtime=$Benchtime" -count=1
         if ($LASTEXITCODE -ne 0) { throw "benchmark smoke failed" }
     }
 } finally {
