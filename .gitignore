@@ -1,0 +1,15 @@
+.idea/
+.vscode/
+*.exe
+*.test
+*.out
+*.prof
+coverage.out
+coverage.txt
+dist/
+build/
+bin/
+.tmp/
+.tmp_bench/
+benchmarks/external/bin/
+benchmarks/external/netty-bench/target/

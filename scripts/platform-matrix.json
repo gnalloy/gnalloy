@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "targets": [
+    {
+      "name": "windows-amd64",
+      "goos": "windows",
+      "goarch": "amd64",
+      "native": true,
+      "backends": {
+        "readiness": ["std"],
+        "completion": ["iocp", "memory"]
+      },
+      "l2Drivers": ["npcap"],
+      "gates": [
+        {
+          "name": "native-tests",
+          "command": ["go", "test", "./..."],
+          "nativeOnly": true
+        },
+        {
+          "name": "cross-compile",
+          "command": ["go", "test", "-c", "./..."]
+        },
+        {
+          "name": "protocol-gate",
+          "command": ["pwsh", "./scripts/verify-protocol.ps1", "-SkipExternal"],
+          "nativeOnly": true
+        }
+      ],
+      "unsupported": ["epoll", "kqueue", "iouring", "unix-socket", "resolver-dns-native-macos"]
+    },
+    {
+      "name": "linux-amd64",
+      "goos": "linux",
+      "goarch": "amd64",
+      "backends": {
+        "readiness": ["epoll", "std"],
+        "completion": ["iouring", "memory"]
+      },
+      "l2Drivers": ["af_packet"],
+      "gates": [
+        {
+          "name": "cross-compile",
+          "command": ["go", "test", "-c", "./..."]
+        },
+        {
+          "name": "protocol-gate",
+          "command": ["./scripts/verify-protocol.sh"],
+          "nativeOnly": true
+        }
+      ],
+      "unsupported": ["kqueue", "iocp", "resolver-dns-native-macos"]
+    },
+    {
+      "name": "linux-arm64",
+      "goos": "linux",
+      "goarch": "arm64",
+      "backends": {
+        "readiness": ["epoll", "std"],
+        "completion": ["iouring", "memory"]
+      },
+      "l2Drivers": ["af_packet"],
+      "gates": [
+        {
+          "name": "cross-compile",
+          "command": ["go", "test", "-c", "./..."]
+        },
+        {
+          "name": "protocol-gate",
+          "command": ["./scripts/verify-protocol.sh"],
+          "nativeOnly": true
+        }
+      ],
+      "unsupported": ["kqueue", "iocp", "resolver-dns-native-macos"]
+    },
+    {
+      "name": "darwin-arm64",
+      "goos": "darwin",
+      "goarch": "arm64",
+      "backends": {
+        "readiness": ["kqueue", "std"],
+        "completion": ["memory"]
+      },
+      "l2Drivers": ["bpf"],
+      "gates": [
+        {
+          "name": "cross-compile",
+          "command": ["go", "test", "-c", "./..."]
+        },
+        {
+          "name": "protocol-gate",
+          "command": ["./scripts/verify-protocol.sh"],
+          "nativeOnly": true
+        }
+      ],
+      "unsupported": ["epoll", "iouring", "iocp"]
+    }
+  ]
+}
