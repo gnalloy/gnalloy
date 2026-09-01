@@ -44,6 +44,10 @@ type UnsafeConfig struct {
 	Timer                *timer.Wheel
 }
 
+type eventLoopTailSubmitter interface {
+	SubmitAfterBatch(transport.Task) error
+}
+
 // Unsafe 是底层 I/O 事件与业务 Pipeline 的分界线。
 type Unsafe struct {
 	ch               *LocalChannel
@@ -58,25 +62,29 @@ type Unsafe struct {
 	closed           atomic.Bool
 	inactiveFired    atomic.Bool
 
-	outHead       *outboundEntry
-	outTail       *outboundEntry
-	outFree       *outboundEntry
-	outboundBytes atomic.Int64
-	eventExecutor atomic.Value
-	readPending   bool
-	writePending  bool
-	writeInterest bool
-	readCallback  bool
-	deferredFlush bool
-	vectorWriter  FDVectorWriter
-	writeBatch    []buffer.ByteBuf
-	writeSlices   [][]byte
-	flushWaiters  []*DefaultPromise
-	closePromise  *DefaultPromise
+	outHead        *outboundEntry
+	outTail        *outboundEntry
+	outFree        *outboundEntry
+	outboundBytes  atomic.Int64
+	eventExecutor  atomic.Value
+	readPending    bool
+	writePending   bool
+	writeInterest  bool
+	readCallback   bool
+	deferredFlush  bool
+	flushPending   bool
+	flushScheduled bool
+	flushScheduler eventLoopTailSubmitter
+	vectorWriter   FDVectorWriter
+	writeBatch     []buffer.ByteBuf
+	writeSlices    [][]byte
+	flushWaiters   []*DefaultPromise
+	closePromise   *DefaultPromise
 
 	autoRead                 atomic.Bool
 	writeSpinCount           atomic.Int64
 	cachedMaxMessagesPerRead atomic.Int64
+	cachedFlushStrategy      atomic.Int64
 	writeHighWatermark       int64
 	writeLowWatermark        int64
 	writable                 atomic.Bool
@@ -119,6 +127,7 @@ func NewUnsafeChannel(cfg UnsafeConfig) (*LocalChannel, *Unsafe) {
 	OptionWriteBufferWatermark.Set(u.ch.Options(), watermark)
 	OptionWriteSpinCount.Set(u.ch.Options(), OptionWriteSpinCount.Get(u.ch.Options()))
 	OptionMaxMessagesPerRead.Set(u.ch.Options(), OptionMaxMessagesPerRead.Get(u.ch.Options()))
+	OptionFlushStrategy.Set(u.ch.Options(), OptionFlushStrategy.Get(u.ch.Options()))
 	return u.ch, u
 }
 
@@ -165,6 +174,8 @@ func (u *Unsafe) applyOptionUpdate(key optionKeyID, value any, present bool) {
 		u.cacheWriteSpinCount(value, present)
 	case OptionMaxMessagesPerRead.name:
 		u.cacheMaxMessagesPerRead(value, present)
+	case OptionFlushStrategy.name:
+		u.cacheFlushStrategy(value, present)
 	}
 }
 
@@ -204,6 +215,21 @@ func (u *Unsafe) cacheMaxMessagesPerRead(value any, present bool) {
 		v = 1
 	}
 	u.cachedMaxMessagesPerRead.Store(int64(v))
+}
+
+func (u *Unsafe) cacheFlushStrategy(value any, present bool) {
+	v := OptionFlushStrategy.Default()
+	if present {
+		if typed, ok := value.(FlushStrategy); ok {
+			v = typed
+		}
+	}
+	switch v {
+	case FlushImmediate, FlushOnReadComplete, FlushOnEventLoopBatch:
+	default:
+		v = OptionFlushStrategy.Default()
+	}
+	u.cachedFlushStrategy.Store(int64(v))
 }
 
 func vectorWriterOf(rw FDReadWriter) FDVectorWriter {

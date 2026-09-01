@@ -39,6 +39,8 @@ var (
 	OptionWriteSpinCount = NewChannelOption("WRITE_SPIN_COUNT", 16)
 	// OptionMaxMessagesPerRead 控制单次可读事件最多连续读取的消息数。
 	OptionMaxMessagesPerRead = NewChannelOption("MAX_MESSAGES_PER_READ", 16)
+	// OptionFlushStrategy 控制出站 flush 请求在 EventLoop 周期内的执行时机。
+	OptionFlushStrategy = NewChannelOption("FLUSH_STRATEGY", FlushOnEventLoopBatch)
 )
 
 func NewChannelOption[T any](name string, defaultValue T) ChannelOption[T] {

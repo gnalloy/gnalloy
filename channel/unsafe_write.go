@@ -36,11 +36,17 @@ func (u *Unsafe) WriteAndFlush(msg any) error {
 		u.ch.Pipeline().FireFlushComplete()
 		return nil
 	}
-	if done, err := u.tryWriteAndFlushDirect(out); done {
-		return err
+	u.flushPending = true
+	if u.canTryImmediateWrite() {
+		if done, err := u.tryWriteAndFlushDirect(out); done {
+			if u.outHead == nil {
+				u.flushPending = false
+			}
+			return err
+		}
 	}
 	u.enqueueOutboundMessage(out, nil)
-	return u.flushOutbound()
+	return u.requestFlush()
 }
 
 func (u *Unsafe) WriteStaticBytesAndFlush(data []byte) error {
@@ -51,8 +57,14 @@ func (u *Unsafe) WriteStaticBytesAndFlush(data []byte) error {
 		u.ch.Pipeline().FireFlushComplete()
 		return nil
 	}
-	if done, err := u.tryWriteStaticBytesAndFlushDirect(data); done {
-		return err
+	u.flushPending = true
+	if u.canTryImmediateWrite() {
+		if done, err := u.tryWriteStaticBytesAndFlushDirect(data); done {
+			if u.outHead == nil {
+				u.flushPending = false
+			}
+			return err
+		}
 	}
 	return u.WriteAndFlush(buffer.NewSharedBuffer(data))
 }
@@ -81,7 +93,7 @@ func (u *Unsafe) Flush() error {
 		u.ch.Pipeline().FireFlushComplete()
 		return nil
 	}
-	if err := u.flushOutbound(); err != nil {
+	if err := u.requestFlush(); err != nil {
 		u.completeFlushWaiters(err)
 		return err
 	}
@@ -96,7 +108,7 @@ func (u *Unsafe) FlushFuture() Future {
 		return promise
 	}
 	u.flushWaiters = append(u.flushWaiters, promise)
-	if err := u.flushOutbound(); err != nil {
+	if err := u.requestFlush(); err != nil {
 		u.completeFlushWaiters(err)
 		return promise
 	}
@@ -349,6 +361,7 @@ func (u *Unsafe) completeWrite(n int64) {
 	}
 	u.updateWritability()
 	if u.outHead == nil {
+		u.flushPending = false
 		u.completeFlushWaiters(nil)
 		u.ch.Pipeline().FireFlushComplete()
 	}
@@ -412,19 +425,4 @@ func (u *Unsafe) newPromise() *DefaultPromise {
 		return NewPromiseWithExecutor(executor)
 	}
 	return NewPromise()
-}
-
-func (u *Unsafe) completeFlushWaiters(err error) {
-	if len(u.flushWaiters) == 0 {
-		return
-	}
-	waiters := u.flushWaiters
-	u.flushWaiters = nil
-	for _, waiter := range waiters {
-		if err != nil {
-			waiter.SetFailure(err)
-		} else {
-			waiter.SetSuccess()
-		}
-	}
 }

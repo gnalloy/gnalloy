@@ -35,6 +35,8 @@ func (u *Unsafe) readReady() {
 	if u.rw == nil {
 		return
 	}
+	u.readCallback = true
+	defer u.finishReadinessReadCallback()
 	read := false
 	messages := 0
 	maxMessages := u.maxMessagesPerRead()
@@ -83,6 +85,26 @@ func (u *Unsafe) readReady() {
 	}
 	if read {
 		u.ch.Pipeline().FireChannelReadComplete()
+	}
+}
+
+func (u *Unsafe) finishReadinessReadCallback() {
+	u.readCallback = false
+	if !u.deferredFlush {
+		return
+	}
+	u.deferredFlush = false
+	if u.closed.Load() {
+		return
+	}
+	var err error
+	if u.flushStrategy() == FlushOnEventLoopBatch && u.flushScheduler != nil {
+		err = u.scheduleFlush()
+	} else {
+		err = u.runPendingFlush()
+	}
+	if err != nil {
+		u.failFlush(err)
 	}
 }
 

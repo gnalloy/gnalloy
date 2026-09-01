@@ -215,6 +215,52 @@ func (rw *vectorWriteRW) Close(transport.FDRef) error {
 	return nil
 }
 
+type scriptedReadWriteRW struct {
+	vectorWriteRW
+	steps []readStep
+	reads int
+}
+
+func (rw *scriptedReadWriteRW) Read(_ transport.FDRef, dst []byte) (int, bool, error) {
+	rw.reads++
+	if len(rw.steps) == 0 {
+		return 0, true, nil
+	}
+	step := rw.steps[0]
+	rw.steps = rw.steps[1:]
+	n := copy(dst, step.data)
+	return n, step.again, nil
+}
+
+func (rw *scriptedReadWriteRW) Close(transport.FDRef) error {
+	return nil
+}
+
+type recordingTailSubmitter struct {
+	tasks []transport.Task
+}
+
+func (s *recordingTailSubmitter) Submit(task transport.Task) error {
+	if task != nil {
+		task()
+	}
+	return nil
+}
+
+func (s *recordingTailSubmitter) SubmitAfterBatch(task transport.Task) error {
+	s.tasks = append(s.tasks, task)
+	return nil
+}
+
+func (s *recordingTailSubmitter) drain() {
+	for len(s.tasks) > 0 {
+		task := s.tasks[0]
+		copy(s.tasks, s.tasks[1:])
+		s.tasks = s.tasks[:len(s.tasks)-1]
+		task()
+	}
+}
+
 type recordingFileRegionWriter struct {
 	steps   []fileRegionWriteStep
 	calls   int
@@ -294,6 +340,13 @@ type echoReadHandler struct {
 	err    error
 }
 
+type readFlushProbe struct {
+	rw               *scriptedReadWriteRW
+	writesInRead     int
+	writesInComplete int
+	err              error
+}
+
 type fixedTestBuf struct {
 	buffer.ByteBuf
 	idx uint16
@@ -316,6 +369,94 @@ func (h *releaseReadHandler) ChannelRead(ctx *HandlerContext, msg any) {
 func (h *echoReadHandler) ChannelRead(ctx *HandlerContext, msg any) {
 	h.writes++
 	h.err = ctx.WriteAndFlush(msg)
+}
+
+func (h *readFlushProbe) ChannelRead(ctx *HandlerContext, msg any) {
+	h.err = ctx.WriteAndFlush(msg)
+	h.writesInRead = h.writeCalls()
+}
+
+func (h *readFlushProbe) ChannelReadComplete(ctx *HandlerContext) {
+	h.writesInComplete = h.writeCalls()
+	ctx.FireChannelReadComplete()
+}
+
+func (h *readFlushProbe) writeCalls() int {
+	if h.rw == nil {
+		return 0
+	}
+	return h.rw.scalar + h.rw.writev
+}
+
+func TestUnsafeReadinessDefersWriteAndFlushUntilReadCallbackReturns(t *testing.T) {
+	rw := &scriptedReadWriteRW{steps: []readStep{{data: "ok", again: true}}}
+	ch, _ := NewUnsafeChannel(UnsafeConfig{
+		ID:             1,
+		FD:             transport.FDRef{FD: 1},
+		Allocator:      buffer.NewHeapAllocator(),
+		Poller:         &fakeReadyPoller{},
+		ReadWriter:     rw,
+		ReadBufferSize: 16,
+	})
+	probe := &readFlushProbe{rw: rw}
+	if err := ch.Pipeline().AddLast("probe", probe); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ch.Read(); err != nil {
+		t.Fatal(err)
+	}
+	if probe.err != nil {
+		t.Fatal(probe.err)
+	}
+	if probe.writesInRead != 0 || probe.writesInComplete != 0 {
+		t.Fatalf("writes in callbacks=%d/%d, want 0/0", probe.writesInRead, probe.writesInComplete)
+	}
+	if rw.scalar != 1 || rw.writev != 0 {
+		t.Fatalf("scalar=%d writev=%d, want one scalar write after read callback", rw.scalar, rw.writev)
+	}
+	if len(rw.writes) != 1 || len(rw.writes[0]) != 1 || rw.writes[0][0] != "ok" {
+		t.Fatalf("writes=%v, want echo payload", rw.writes)
+	}
+}
+
+func TestUnsafeEventLoopBatchFlushSchedulesOnce(t *testing.T) {
+	rw := &scriptedReadWriteRW{steps: []readStep{{data: "ok", again: true}}}
+	ch, unsafeCh := NewUnsafeChannel(UnsafeConfig{
+		ID:             1,
+		FD:             transport.FDRef{FD: 1},
+		Allocator:      buffer.NewHeapAllocator(),
+		Poller:         &fakeReadyPoller{},
+		ReadWriter:     rw,
+		ReadBufferSize: 16,
+	})
+	scheduler := &recordingTailSubmitter{}
+	unsafeCh.BindEventExecutor(scheduler)
+	probe := &readFlushProbe{rw: rw}
+	if err := ch.Pipeline().AddLast("probe", probe); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ch.Read(); err != nil {
+		t.Fatal(err)
+	}
+	if probe.err != nil {
+		t.Fatal(probe.err)
+	}
+	if got := len(scheduler.tasks); got != 1 {
+		t.Fatalf("scheduled flush tasks=%d, want 1", got)
+	}
+	if rw.scalar != 0 || rw.writev != 0 {
+		t.Fatalf("scalar=%d writev=%d, want no write before tail task", rw.scalar, rw.writev)
+	}
+
+	scheduler.drain()
+	if rw.scalar != 1 || rw.writev != 0 {
+		t.Fatalf("scalar=%d writev=%d, want one scalar write after tail task", rw.scalar, rw.writev)
+	}
+	if len(scheduler.tasks) != 0 {
+		t.Fatalf("scheduled flush tasks=%d, want drained", len(scheduler.tasks))
+	}
 }
 
 func TestUnsafeOutboundPartialWrite(t *testing.T) {
@@ -1120,6 +1261,15 @@ func TestUnsafeOptionCacheTracksSetAndRemove(t *testing.T) {
 	OptionMaxMessagesPerRead.Remove(ch.Options())
 	if got := unsafeCh.maxMessagesPerRead(); got != OptionMaxMessagesPerRead.Default() {
 		t.Fatalf("max messages per read=%d, want default %d", got, OptionMaxMessagesPerRead.Default())
+	}
+
+	OptionFlushStrategy.Set(ch.Options(), FlushImmediate)
+	if got := unsafeCh.flushStrategy(); got != FlushImmediate {
+		t.Fatalf("flush strategy=%d, want immediate", got)
+	}
+	OptionFlushStrategy.Remove(ch.Options())
+	if got := unsafeCh.flushStrategy(); got != OptionFlushStrategy.Default() {
+		t.Fatalf("flush strategy=%d, want default %d", got, OptionFlushStrategy.Default())
 	}
 }
 

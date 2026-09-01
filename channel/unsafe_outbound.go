@@ -130,6 +130,9 @@ func (u *Unsafe) disableWriteInterest() error {
 }
 
 func (u *Unsafe) releaseOutbound() {
+	u.flushPending = false
+	u.flushScheduled = false
+	u.deferredFlush = false
 	for u.outHead != nil {
 		e := u.outHead
 		u.outHead = e.next

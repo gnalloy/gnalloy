@@ -8,6 +8,9 @@ func (u *Unsafe) BindEventExecutor(executor interface{ Submit(transport.Task) er
 		return
 	}
 	u.eventExecutor.Store(executor)
+	if scheduler, ok := executor.(eventLoopTailSubmitter); ok {
+		u.flushScheduler = scheduler
+	}
 	u.closePromise.SetListenerExecutor(executor)
 	if u.ch != nil {
 		u.ch.BindEventExecutor(executor)
@@ -72,8 +75,8 @@ func (u *Unsafe) handleReadiness(ev transport.PollEvent) {
 		}
 	}
 	if ev.Ready&transport.ReadyWrite != 0 {
-		if err := u.flushOutbound(); err != nil {
-			u.fail(err)
+		if err := u.runPendingFlush(); err != nil {
+			u.failFlush(err)
 		}
 	}
 }
@@ -111,7 +114,7 @@ func (u *Unsafe) handleCompletion(ev transport.PollEvent) {
 			return
 		}
 		if err := u.submitAfterReadCompletion(); err != nil {
-			u.fail(err)
+			u.failFlush(err)
 		}
 	case transport.OpWrite:
 		if ev.Buf != nil {
@@ -127,8 +130,8 @@ func (u *Unsafe) handleCompletion(ev transport.PollEvent) {
 		}
 		u.completeWrite(int64(ev.N))
 		if !u.closed.Load() {
-			if err := u.flushOutbound(); err != nil {
-				u.fail(err)
+			if err := u.runPendingFlush(); err != nil {
+				u.failFlush(err)
 			}
 		}
 	case transport.OpClose:

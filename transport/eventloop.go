@@ -48,6 +48,7 @@ type EventLoop struct {
 	id          EventLoopID
 	poller      Poller
 	tasks       *queue.MPSC[Task]
+	tailTasks   *queue.MPSC[Task]
 	timer       *timer.Wheel
 	events      []PollEvent
 	cpuAffinity int
@@ -58,6 +59,7 @@ type EventLoop struct {
 	closed   atomic.Bool
 
 	taskWakeupPending atomic.Bool
+	executing         atomic.Bool
 }
 
 func NewEventLoop(cfg EventLoopConfig) (*EventLoop, error) {
@@ -88,6 +90,7 @@ func NewEventLoop(cfg EventLoopConfig) (*EventLoop, error) {
 		id:          cfg.ID,
 		poller:      cfg.Poller,
 		tasks:       queue.NewMPSC[Task](taskQueueSize),
+		tailTasks:   queue.NewMPSC[Task](taskQueueSize),
 		timer:       tw,
 		events:      make([]PollEvent, eventBatchSize),
 		cpuAffinity: cfg.CPUAffinity,
@@ -153,6 +156,26 @@ func (l *EventLoop) Submit(task Task) error {
 	return l.signalTaskWakeup()
 }
 
+// SubmitAfterBatch 把任务放到当前 EventLoop 批次尾部执行。
+//
+// 该队列用于 I/O owner 线程内的安全点，例如批量 flush 出站缓冲。调用方不应在
+// 这里放入阻塞业务逻辑，否则会直接拖慢 I/O 周期。
+func (l *EventLoop) SubmitAfterBatch(task Task) error {
+	if task == nil {
+		return nil
+	}
+	if l.closed.Load() {
+		return ErrEventLoopClosed
+	}
+	if !l.tailTasks.Offer(task) {
+		return ErrTaskQueueFull
+	}
+	if l.executing.Load() {
+		return nil
+	}
+	return l.signalTaskWakeup()
+}
+
 // Invoke 将控制面任务投递到 EventLoop 并等待执行结果。
 // 它用于启动、注册、测试等低频路径，不参与 I/O 热路径。
 func (l *EventLoop) Invoke(ctx context.Context, task func() error) error {
@@ -206,24 +229,32 @@ func (l *EventLoop) RunOnce(nowMillis int64) error {
 	if l.closed.Load() {
 		return ErrEventLoopClosed
 	}
+	l.executing.Store(true)
 	l.drainTasks()
+	l.drainTailTasks()
 	l.timer.Advance(nowMillis, 0)
 	timeout := l.timer.NextDelayMillis(nowMillis)
+	l.executing.Store(false)
 	n, err := l.poller.Poll(l.events, timeout)
 	if err != nil {
 		return err
 	}
+	l.executing.Store(true)
+	defer l.executing.Store(false)
 	for i := 0; i < n; i++ {
 		ev := l.events[i]
 		if ev.Op == OpWakeup {
 			l.drainTasks()
+			l.drainTailTasks()
 			continue
 		}
 		if ch := l.channels[ev.ChannelID]; ch != nil {
 			ch.HandleEvent(ev)
 		}
 	}
+	l.drainTailTasks()
 	l.drainTasks()
+	l.drainTailTasks()
 	return nil
 }
 
@@ -253,6 +284,16 @@ func (l *EventLoop) drainTasks() {
 	l.taskWakeupPending.Store(false)
 	for {
 		task, ok := l.tasks.Poll()
+		if !ok {
+			return
+		}
+		task()
+	}
+}
+
+func (l *EventLoop) drainTailTasks() {
+	for {
+		task, ok := l.tailTasks.Poll()
 		if !ok {
 			return
 		}
