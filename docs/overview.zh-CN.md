@@ -37,9 +37,11 @@ Go 原生、受 Netty 启发的网络核心库，提供 ByteBuf、Channel、Even
 - `gnalloy.org/gnalloy/validation/platformmatrix`（`platformmatrix`）
 
 ## 直接 Gnalloy 依赖
-- 按仓库规划，该模块没有直接 Gnalloy 模块依赖。
 
-## 当前模块规划中的直接下游
+- 当前 `go.mod` 没有直接 Gnalloy 模块依赖。
+
+## 当前仓库集合中的直接下游
+
 - `gnalloy.org/benchmarks`
 - `gnalloy.org/codec-compression`
 - `gnalloy.org/codec-dns`

@@ -59,7 +59,8 @@ It does not absorb neighboring module responsibilities. Core primitives stay in 
 - `gnalloy.org/gnalloy/validation/platformmatrix` (`platformmatrix`)
 
 ## Gnalloy Dependencies
-- No direct Gnalloy module dependency is required by the repository plan.
+
+- No direct Gnalloy module dependency is required by the current `go.mod`.
 
 ## Common Integration Pattern
 - Configuration is passed through explicit constructors and option structs rather than package-level mutable state.

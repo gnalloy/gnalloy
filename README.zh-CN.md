@@ -59,7 +59,8 @@ GOWORK=off GOTOOLCHAIN=local go test ./... -count=1
 - `gnalloy.org/gnalloy/validation/platformmatrix`（`platformmatrix`）
 
 ## Gnalloy 依赖
-- 按仓库规划，该模块没有直接 Gnalloy 模块依赖。
+
+- 当前 `go.mod` 没有直接 Gnalloy 模块依赖。
 
 ## 常见集成方式
 - 配置通过显式构造函数和 option struct 传入，不使用包级可变状态。

@@ -37,9 +37,11 @@ This is the core contract module. It owns ByteBuf, Channel, Pipeline, EventLoop,
 - `gnalloy.org/gnalloy/validation/platformmatrix` (`platformmatrix`)
 
 ## Direct Gnalloy Dependencies
-- No direct Gnalloy module dependency is required by the repository plan.
 
-## Direct Dependents in the Current Module Plan
+- No direct Gnalloy module dependency is required by the current `go.mod`.
+
+## Direct Dependents in the Current Repository Set
+
 - `gnalloy.org/benchmarks`
 - `gnalloy.org/codec-compression`
 - `gnalloy.org/codec-dns`
