@@ -2,10 +2,8 @@ package channel
 
 func writeFutureFrom(c *HandlerContext, msg any) Future {
 	for n := c.prev; n != nil; n = n.prev {
-		if h, ok := n.handler.(interface {
-			WriteFuture(ctx *HandlerContext, msg any) Future
-		}); ok {
-			return h.WriteFuture(n, msg)
+		if n.writeFuture != nil {
+			return n.writeFuture.WriteFuture(n, msg)
 		}
 		if n.write != nil {
 			err := n.write.Write(n, msg)
@@ -30,10 +28,8 @@ func writeFutureFrom(c *HandlerContext, msg any) Future {
 
 func flushFutureFrom(c *HandlerContext) Future {
 	for n := c.prev; n != nil; n = n.prev {
-		if h, ok := n.handler.(interface {
-			FlushFuture(ctx *HandlerContext) Future
-		}); ok {
-			return h.FlushFuture(n)
+		if n.flushFuture != nil {
+			return n.flushFuture.FlushFuture(n)
 		}
 		if n.flush != nil {
 			err := n.flush.Flush(n)
@@ -58,13 +54,11 @@ func flushFutureFrom(c *HandlerContext) Future {
 
 func closeFutureFrom(c *HandlerContext) Future {
 	for n := c.prev; n != nil; n = n.prev {
-		if h, ok := n.handler.(interface {
-			CloseFuture(ctx *HandlerContext) Future
-		}); ok {
-			return h.CloseFuture(n)
+		if n.closeFuture != nil {
+			return n.closeFuture.CloseFuture(n)
 		}
-		if h, ok := n.handler.(CloseHandler); ok {
-			err := h.Close(n)
+		if n.close != nil {
+			err := n.close.Close(n)
 			if err != nil {
 				return FailedFuture(err)
 			}

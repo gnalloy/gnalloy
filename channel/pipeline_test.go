@@ -87,6 +87,27 @@ func (h *outboundRecorder) Flush(ctx *HandlerContext) error {
 	return ctx.Flush()
 }
 
+type futureOutboundRecorder struct {
+	writes  int
+	flushes int
+	closes  int
+}
+
+func (h *futureOutboundRecorder) WriteFuture(_ *HandlerContext, _ any) Future {
+	h.writes++
+	return SucceededFuture()
+}
+
+func (h *futureOutboundRecorder) FlushFuture(_ *HandlerContext) Future {
+	h.flushes++
+	return SucceededFuture()
+}
+
+func (h *futureOutboundRecorder) CloseFuture(_ *HandlerContext) Future {
+	h.closes++
+	return SucceededFuture()
+}
+
 func TestPipelineInboundPropagation(t *testing.T) {
 	ch := NewLocalChannel(1, buffer.NewHeapAllocator(), &captureSink{})
 	capture := &captureInbound{}
@@ -209,6 +230,30 @@ func TestPipelineWriteAndFlushDisablesDirectSinkAfterInboundReplace(t *testing.T
 	}
 	if len(sink.writeAndFlushes) != 0 {
 		t.Fatalf("direct sink used despite replaced outbound handler: %v", sink.writeAndFlushes)
+	}
+}
+
+func TestPipelineFutureHandlers(t *testing.T) {
+	sink := &captureSink{}
+	ch := NewLocalChannel(1, buffer.NewHeapAllocator(), sink)
+	recorder := &futureOutboundRecorder{}
+	if err := ch.Pipeline().AddLast("future", recorder); err != nil {
+		t.Fatal(err)
+	}
+	if future := ch.Pipeline().WriteFuture("payload"); !future.IsSuccess() {
+		t.Fatalf("write future err=%v", future.Err())
+	}
+	if future := ch.Pipeline().FlushFuture(); !future.IsSuccess() {
+		t.Fatalf("flush future err=%v", future.Err())
+	}
+	if future := ch.Pipeline().CloseFuture(); !future.IsSuccess() {
+		t.Fatalf("close future err=%v", future.Err())
+	}
+	if recorder.writes != 1 || recorder.flushes != 1 || recorder.closes != 1 {
+		t.Fatalf("future handler calls=%d/%d/%d, want 1/1/1", recorder.writes, recorder.flushes, recorder.closes)
+	}
+	if len(sink.writes) != 0 || sink.flushed || sink.closed {
+		t.Fatalf("sink should not be reached: %+v", sink)
 	}
 }
 

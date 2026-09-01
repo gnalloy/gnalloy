@@ -153,6 +153,28 @@ func TestByteToMessageListDecoderEmitsMultipleMessages(t *testing.T) {
 	collector.release()
 }
 
+func TestByteToMessageDecoderRequiresProgressWhenEmitting(t *testing.T) {
+	collector := &frameCollector{}
+	ch := channel.NewLocalChannel(1, buffer.NewHeapAllocator(), nil)
+	out := testBuf([]byte("x"))
+	decoder := NewByteToMessageDecoder(byteDecoderFunc{
+		decode: func(*channel.HandlerContext, *buffer.CompositeByteBuf) (any, error) {
+			return out, nil
+		},
+	})
+	_ = ch.Pipeline().AddLast("decoder", decoder)
+	_ = ch.Pipeline().AddLast("collector", collector)
+
+	ch.Pipeline().FireChannelRead(testBuf([]byte("abc")))
+	if len(collector.errs) != 1 || !errors.Is(collector.errs[0], ErrDecoderNoProgress) {
+		t.Fatalf("errs=%v, want ErrDecoderNoProgress", collector.errs)
+	}
+	if refs := out.RefCnt(); refs != 0 {
+		out.Release()
+		t.Fatalf("emitted buffer ref=%d, want 0", refs)
+	}
+}
+
 func TestMessageToMessageCodec(t *testing.T) {
 	sink := &codecOutboundSink{}
 	ch := channel.NewLocalChannel(1, buffer.NewHeapAllocator(), sink)
@@ -218,6 +240,14 @@ type byteListDecoderFunc struct {
 
 func (f byteListDecoderFunc) DecodeBytes(ctx *channel.HandlerContext, in *buffer.CompositeByteBuf, out *MessageList) error {
 	return f.decode(ctx, in, out)
+}
+
+type byteDecoderFunc struct {
+	decode func(*channel.HandlerContext, *buffer.CompositeByteBuf) (any, error)
+}
+
+func (f byteDecoderFunc) Decode(ctx *channel.HandlerContext, in *buffer.CompositeByteBuf) (any, error) {
+	return f.decode(ctx, in)
 }
 
 type failingOutboundSink struct {

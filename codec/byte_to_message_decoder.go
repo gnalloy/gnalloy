@@ -93,50 +93,79 @@ func (d *ByteToMessageDecoder) ChannelInactive(ctx *channel.HandlerContext) {
 
 func (d *ByteToMessageDecoder) decodeLoop(ctx *channel.HandlerContext) {
 	for d.cumulation != nil && d.cumulation.ReadableBytes() > 0 {
-		readerBefore := d.cumulation.ReaderIndex()
-		readableBefore := d.cumulation.ReadableBytes()
-
-		d.out.Reset()
 		if d.listDecoder != nil {
-			if err := d.listDecoder.DecodeBytes(ctx, d.cumulation, &d.out); err != nil {
-				d.out.ReleaseAll()
-				ctx.FireExceptionCaught(err)
-				d.releaseCumulation()
+			if !d.decodeList(ctx) {
 				return
 			}
-		} else {
-			out, err := d.decoder.Decode(ctx, d.cumulation)
-			if err != nil {
-				releaseMessage(out)
-				ctx.FireExceptionCaught(err)
-				d.releaseCumulation()
-				return
-			}
-			d.out.Add(out)
+			continue
 		}
-
-		progressed := d.cumulation.ReaderIndex() != readerBefore || d.cumulation.ReadableBytes() != readableBefore
-		if progressed {
-			d.cumulation.DiscardReadComponents()
-		}
-
-		if d.out.Len() == 0 {
-			if progressed {
-				continue
-			}
+		if !d.decodeOne(ctx) {
 			return
 		}
-		if !progressed {
-			d.out.ReleaseAll()
-			ctx.FireExceptionCaught(ErrDecoderNoProgress)
-			d.releaseCumulation()
-			return
-		}
-		for i := 0; i < d.out.Len(); i++ {
-			ctx.FireChannelRead(d.out.At(i))
-		}
-		d.out.Reset()
 	}
+}
+
+func (d *ByteToMessageDecoder) decodeOne(ctx *channel.HandlerContext) bool {
+	readerBefore := d.cumulation.ReaderIndex()
+	readableBefore := d.cumulation.ReadableBytes()
+
+	out, err := d.decoder.Decode(ctx, d.cumulation)
+	if err != nil {
+		releaseMessage(out)
+		ctx.FireExceptionCaught(err)
+		d.releaseCumulation()
+		return false
+	}
+
+	progressed := d.cumulation.ReaderIndex() != readerBefore || d.cumulation.ReadableBytes() != readableBefore
+	if progressed {
+		d.cumulation.DiscardReadComponents()
+	}
+
+	if out == nil {
+		return progressed
+	}
+	if !progressed {
+		releaseMessage(out)
+		ctx.FireExceptionCaught(ErrDecoderNoProgress)
+		d.releaseCumulation()
+		return false
+	}
+	ctx.FireChannelRead(out)
+	return true
+}
+
+func (d *ByteToMessageDecoder) decodeList(ctx *channel.HandlerContext) bool {
+	readerBefore := d.cumulation.ReaderIndex()
+	readableBefore := d.cumulation.ReadableBytes()
+
+	d.out.Reset()
+	if err := d.listDecoder.DecodeBytes(ctx, d.cumulation, &d.out); err != nil {
+		d.out.ReleaseAll()
+		ctx.FireExceptionCaught(err)
+		d.releaseCumulation()
+		return false
+	}
+
+	progressed := d.cumulation.ReaderIndex() != readerBefore || d.cumulation.ReadableBytes() != readableBefore
+	if progressed {
+		d.cumulation.DiscardReadComponents()
+	}
+
+	if d.out.Len() == 0 {
+		return progressed
+	}
+	if !progressed {
+		d.out.ReleaseAll()
+		ctx.FireExceptionCaught(ErrDecoderNoProgress)
+		d.releaseCumulation()
+		return false
+	}
+	for i := 0; i < d.out.Len(); i++ {
+		ctx.FireChannelRead(d.out.At(i))
+	}
+	d.out.Reset()
+	return true
 }
 
 func (d *ByteToMessageDecoder) releaseCumulation() {

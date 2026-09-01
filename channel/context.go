@@ -20,11 +20,22 @@ type HandlerContext struct {
 	prev     *HandlerContext
 	next     *HandlerContext
 
-	channelRead         ChannelReadHandler
-	channelReadComplete ChannelReadCompleteHandler
-	exceptionCaught     ExceptionCaughtHandler
-	write               WriteHandler
-	flush               FlushHandler
+	channelRegistered         ChannelRegisteredHandler
+	channelUnregistered       ChannelUnregisteredHandler
+	channelActive             ChannelActiveHandler
+	channelRead               ChannelReadHandler
+	channelReadComplete       ChannelReadCompleteHandler
+	channelInactive           ChannelInactiveHandler
+	channelWritabilityChanged ChannelWritabilityChangedHandler
+	userEventTriggered        UserEventTriggeredHandler
+	exceptionCaught           ExceptionCaughtHandler
+	write                     WriteHandler
+	writeFuture               WriteFutureHandler
+	flush                     FlushHandler
+	flushFuture               FlushFutureHandler
+	flushComplete             FlushCompleteHandler
+	close                     CloseHandler
+	closeFuture               CloseFutureHandler
 }
 
 func (c *HandlerContext) Name() string {
@@ -69,8 +80,8 @@ func (c *HandlerContext) Execute(task transport.Task) error {
 
 func (c *HandlerContext) FireChannelRegistered() {
 	for n := c.next; n != nil; n = n.next {
-		if h, ok := n.handler.(ChannelRegisteredHandler); ok {
-			h.ChannelRegistered(n)
+		if n.channelRegistered != nil {
+			n.channelRegistered.ChannelRegistered(n)
 			return
 		}
 	}
@@ -78,8 +89,8 @@ func (c *HandlerContext) FireChannelRegistered() {
 
 func (c *HandlerContext) FireChannelUnregistered() {
 	for n := c.next; n != nil; n = n.next {
-		if h, ok := n.handler.(ChannelUnregisteredHandler); ok {
-			h.ChannelUnregistered(n)
+		if n.channelUnregistered != nil {
+			n.channelUnregistered.ChannelUnregistered(n)
 			return
 		}
 	}
@@ -87,8 +98,8 @@ func (c *HandlerContext) FireChannelUnregistered() {
 
 func (c *HandlerContext) FireChannelActive() {
 	for n := c.next; n != nil; n = n.next {
-		if h, ok := n.handler.(ChannelActiveHandler); ok {
-			h.ChannelActive(n)
+		if n.channelActive != nil {
+			n.channelActive.ChannelActive(n)
 			return
 		}
 	}
@@ -114,8 +125,8 @@ func (c *HandlerContext) FireChannelReadComplete() {
 
 func (c *HandlerContext) FireChannelInactive() {
 	for n := c.next; n != nil; n = n.next {
-		if h, ok := n.handler.(ChannelInactiveHandler); ok {
-			h.ChannelInactive(n)
+		if n.channelInactive != nil {
+			n.channelInactive.ChannelInactive(n)
 			return
 		}
 	}
@@ -123,8 +134,8 @@ func (c *HandlerContext) FireChannelInactive() {
 
 func (c *HandlerContext) FireChannelWritabilityChanged() {
 	for n := c.next; n != nil; n = n.next {
-		if h, ok := n.handler.(ChannelWritabilityChangedHandler); ok {
-			h.ChannelWritabilityChanged(n)
+		if n.channelWritabilityChanged != nil {
+			n.channelWritabilityChanged.ChannelWritabilityChanged(n)
 			return
 		}
 	}
@@ -132,8 +143,8 @@ func (c *HandlerContext) FireChannelWritabilityChanged() {
 
 func (c *HandlerContext) FireUserEventTriggered(event any) {
 	for n := c.next; n != nil; n = n.next {
-		if h, ok := n.handler.(UserEventTriggeredHandler); ok {
-			h.UserEventTriggered(n, event)
+		if n.userEventTriggered != nil {
+			n.userEventTriggered.UserEventTriggered(n, event)
 			return
 		}
 	}
@@ -141,8 +152,8 @@ func (c *HandlerContext) FireUserEventTriggered(event any) {
 
 func (c *HandlerContext) FireFlushComplete() {
 	for n := c.next; n != nil; n = n.next {
-		if h, ok := n.handler.(FlushCompleteHandler); ok {
-			h.FlushComplete(n)
+		if n.flushComplete != nil {
+			n.flushComplete.FlushComplete(n)
 			return
 		}
 	}
@@ -237,8 +248,8 @@ func (c *HandlerContext) CloseFuture() Future {
 
 func (c *HandlerContext) Close() error {
 	for n := c.prev; n != nil; n = n.prev {
-		if h, ok := n.handler.(CloseHandler); ok {
-			return h.Close(n)
+		if n.close != nil {
+			return n.close.Close(n)
 		}
 	}
 	if c.pipeline.sink == nil {

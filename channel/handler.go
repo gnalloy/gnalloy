@@ -51,8 +51,16 @@ type WriteHandler interface {
 	Write(ctx *HandlerContext, msg any) error
 }
 
+type WriteFutureHandler interface {
+	WriteFuture(ctx *HandlerContext, msg any) Future
+}
+
 type FlushHandler interface {
 	Flush(ctx *HandlerContext) error
+}
+
+type FlushFutureHandler interface {
+	FlushFuture(ctx *HandlerContext) Future
 }
 
 type FlushCompleteHandler interface {
@@ -61,4 +69,8 @@ type FlushCompleteHandler interface {
 
 type CloseHandler interface {
 	Close(ctx *HandlerContext) error
+}
+
+type CloseFutureHandler interface {
+	CloseFuture(ctx *HandlerContext) Future
 }
