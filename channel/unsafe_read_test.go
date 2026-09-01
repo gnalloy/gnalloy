@@ -40,7 +40,7 @@ func TestUnsafeReadinessStopsAfterShortRead(t *testing.T) {
 	}
 }
 
-func TestUnsafeReadinessContinuesAfterTinyShortRead(t *testing.T) {
+func TestUnsafeReadinessStopsAfterTinyShortRead(t *testing.T) {
 	rw := &scriptedReadRW{steps: []readStep{
 		{data: "x"},
 		{again: true},
@@ -61,8 +61,35 @@ func TestUnsafeReadinessContinuesAfterTinyShortRead(t *testing.T) {
 	if err := ch.Read(); err != nil {
 		t.Fatal(err)
 	}
-	if rw.reads != 2 || reader.reads != 1 {
-		t.Fatalf("reads=%d handler=%d, want tiny read plus EAGAIN probe", rw.reads, reader.reads)
+	if rw.reads != 1 || reader.reads != 1 {
+		t.Fatalf("reads=%d handler=%d, want tiny short read without EAGAIN probe", rw.reads, reader.reads)
+	}
+}
+
+func TestUnsafeReadinessContinuesAfterFullRead(t *testing.T) {
+	rw := &scriptedReadRW{steps: []readStep{
+		{data: "abcd"},
+		{data: "ef"},
+		{again: true},
+	}}
+	ch, _ := NewUnsafeChannel(UnsafeConfig{
+		ID:             1,
+		FD:             transport.FDRef{FD: 1},
+		Allocator:      buffer.NewHeapAllocator(),
+		Poller:         &fakeReadyPoller{},
+		ReadWriter:     rw,
+		ReadBufferSize: 4,
+	})
+	reader := &releaseReadHandler{}
+	if err := ch.Pipeline().AddLast("reader", reader); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ch.Read(); err != nil {
+		t.Fatal(err)
+	}
+	if rw.reads != 2 || reader.reads != 2 {
+		t.Fatalf("reads=%d handler=%d, want full read followed by short read", rw.reads, reader.reads)
 	}
 }
 
@@ -74,9 +101,9 @@ func TestShouldStopAfterShortRead(t *testing.T) {
 		want      bool
 	}{
 		{name: "meaningful default buffer short read", n: 1024, attempted: defaultReadBufferSize, want: true},
-		{name: "tiny short read", n: 64, attempted: defaultReadBufferSize, want: false},
+		{name: "tiny short read", n: 64, attempted: defaultReadBufferSize, want: true},
 		{name: "full read", n: defaultReadBufferSize, attempted: defaultReadBufferSize, want: false},
-		{name: "large buffer short read", n: defaultReadBufferSize, attempted: defaultReadBufferSize * 4, want: false},
+		{name: "large buffer short read", n: defaultReadBufferSize, attempted: defaultReadBufferSize * 4, want: true},
 		{name: "empty read", n: 0, attempted: defaultReadBufferSize, want: false},
 	}
 

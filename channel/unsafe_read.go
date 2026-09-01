@@ -104,14 +104,8 @@ func (u *Unsafe) submitRead() error {
 }
 
 func shouldStopAfterShortRead(n int, attempted int) bool {
-	if n <= 0 || n >= attempted {
-		return false
-	}
-	if attempted > defaultReadBufferSize {
-		return false
-	}
-	// 短读达到缓冲区 1/4 以上时，按 Netty 读循环经验结束本轮，减少 EAGAIN 探测。
-	return n >= (attempted+3)/4
+	// 非阻塞 socket 短读表示当前接收队列已被读空，本轮无需再用 EAGAIN 证明。
+	return n > 0 && n < attempted
 }
 
 func (u *Unsafe) prepareReadRequest() (transport.IORequest, buffer.ByteBuf, error) {
