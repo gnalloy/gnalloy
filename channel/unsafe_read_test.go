@@ -119,18 +119,21 @@ func TestShouldStopAfterShortRead(t *testing.T) {
 
 func TestReadBufferSizerAdaptsWithinBounds(t *testing.T) {
 	sizer := newReadBufferSizer(defaultReadBufferSize)
-	if got := sizer.nextSize(); got != defaultInitialReadBufferSize {
-		t.Fatalf("initial size=%d, want %d", got, defaultInitialReadBufferSize)
+	if got := sizer.nextSize(); got != defaultReadBufferSize {
+		t.Fatalf("initial size=%d, want %d", got, defaultReadBufferSize)
 	}
 
-	sizer.record(defaultInitialReadBufferSize, defaultInitialReadBufferSize)
-	if got := sizer.nextSize(); got != defaultInitialReadBufferSize*2 {
-		t.Fatalf("grown size=%d, want %d", got, defaultInitialReadBufferSize*2)
+	sizer.record(64, defaultReadBufferSize)
+	if got := sizer.nextSize(); got != defaultReadBufferSize {
+		t.Fatalf("size after first low utilization=%d, want %d", got, defaultReadBufferSize)
 	}
-
-	sizer.record(64, defaultInitialReadBufferSize*2)
-	if got := sizer.nextSize(); got != defaultInitialReadBufferSize {
-		t.Fatalf("shrunk size=%d, want %d", got, defaultInitialReadBufferSize)
+	sizer.record(64, defaultReadBufferSize)
+	if got := sizer.nextSize(); got != defaultReadBufferSize/2 {
+		t.Fatalf("shrunk size=%d, want %d", got, defaultReadBufferSize/2)
+	}
+	sizer.record(defaultReadBufferSize/2, defaultReadBufferSize/2)
+	if got := sizer.nextSize(); got != defaultReadBufferSize {
+		t.Fatalf("grown size=%d, want %d", got, defaultReadBufferSize)
 	}
 }
 
@@ -145,12 +148,22 @@ func TestReadBufferSizerHonorsSmallExplicitLimit(t *testing.T) {
 	}
 }
 
-func TestUnsafeReadinessUsesAdaptiveReadBufferSize(t *testing.T) {
+func TestReadBufferSizerKeepsHalfUtilizedCapacity(t *testing.T) {
+	sizer := newReadBufferSizer(defaultReadBufferSize)
+	sizer.record(defaultReadBufferSize/2, defaultReadBufferSize)
+	sizer.record(defaultReadBufferSize/2, defaultReadBufferSize)
+
+	if got := sizer.nextSize(); got != defaultReadBufferSize {
+		t.Fatalf("size=%d, want %d at half utilization", got, defaultReadBufferSize)
+	}
+}
+
+func TestUnsafeReadinessStartsAtConfiguredReadBufferSize(t *testing.T) {
 	rw := &scriptedReadRW{steps: []readStep{
-		{data: strings.Repeat("a", defaultInitialReadBufferSize)},
+		{data: strings.Repeat("a", defaultMinReadBufferSize)},
 		{data: "b"},
 	}}
-	ch, _ := NewUnsafeChannel(UnsafeConfig{
+	ch, unsafeCh := NewUnsafeChannel(UnsafeConfig{
 		ID:             1,
 		FD:             transport.FDRef{FD: 1},
 		Allocator:      buffer.NewHeapAllocator(),
@@ -166,11 +179,17 @@ func TestUnsafeReadinessUsesAdaptiveReadBufferSize(t *testing.T) {
 	if err := ch.Read(); err != nil {
 		t.Fatal(err)
 	}
+	if err := ch.Read(); err != nil {
+		t.Fatal(err)
+	}
 	if len(rw.attempts) != 2 {
 		t.Fatalf("attempts=%v, want two reads", rw.attempts)
 	}
-	if rw.attempts[0] != defaultInitialReadBufferSize || rw.attempts[1] != defaultInitialReadBufferSize*2 {
-		t.Fatalf("attempts=%v, want adaptive growth", rw.attempts)
+	if rw.attempts[0] != defaultReadBufferSize || rw.attempts[1] != defaultReadBufferSize {
+		t.Fatalf("attempts=%v, want configured initial capacity", rw.attempts)
+	}
+	if got := unsafeCh.nextReadBufferSize(); got != defaultReadBufferSize/2 {
+		t.Fatalf("next read size=%d, want hysteretic shrink", got)
 	}
 }
 

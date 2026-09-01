@@ -3,14 +3,14 @@ package channel
 import "gnalloy.org/gnalloy/buffer"
 
 const (
-	defaultMinReadBufferSize     = 512
-	defaultInitialReadBufferSize = 512
+	defaultMinReadBufferSize = 512
 )
 
 type readBufferSizer struct {
-	min  int
-	next int
-	max  int
+	min         int
+	next        int
+	max         int
+	decreaseNow bool
 }
 
 func newReadBufferSizer(maxSize int) readBufferSizer {
@@ -21,14 +21,7 @@ func newReadBufferSizer(maxSize int) readBufferSizer {
 	if maxSize < minSize {
 		minSize = maxSize
 	}
-	nextSize := defaultInitialReadBufferSize
-	if nextSize < minSize {
-		nextSize = minSize
-	}
-	if nextSize > maxSize {
-		nextSize = maxSize
-	}
-	return readBufferSizer{min: minSize, next: nextSize, max: maxSize}
+	return readBufferSizer{min: minSize, next: maxSize, max: maxSize}
 }
 
 func (s *readBufferSizer) reset(maxSize int) {
@@ -47,12 +40,20 @@ func (s *readBufferSizer) record(actual int, attempted int) {
 		return
 	}
 	if actual >= attempted {
+		s.decreaseNow = false
 		s.grow(attempted)
 		return
 	}
-	if actual <= attempted/2 {
-		s.shrink(attempted)
+	if actual < attempted/2 {
+		if s.decreaseNow {
+			s.shrink(attempted)
+			s.decreaseNow = false
+		} else {
+			s.decreaseNow = true
+		}
+		return
 	}
+	s.decreaseNow = false
 }
 
 func (s *readBufferSizer) grow(attempted int) {
