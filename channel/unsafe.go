@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"gnalloy.org/gnalloy/buffer"
@@ -62,7 +63,9 @@ type Unsafe struct {
 	registered       atomic.Bool
 	closed           atomic.Bool
 	inactiveFired    atomic.Bool
+	concurrentWrite  atomic.Bool
 
+	outboundMu     sync.Mutex
 	outHead        *outboundEntry
 	outTail        *outboundEntry
 	outFree        *outboundEntry
@@ -71,7 +74,7 @@ type Unsafe struct {
 	readPending    bool
 	writePending   bool
 	writeInterest  bool
-	readCallback   bool
+	readCallback   atomic.Bool
 	deferredFlush  bool
 	flushPending   bool
 	flushScheduled bool

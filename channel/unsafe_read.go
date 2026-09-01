@@ -35,7 +35,7 @@ func (u *Unsafe) readReady() {
 	if u.rw == nil {
 		return
 	}
-	u.readCallback = true
+	u.readCallback.Store(true)
 	defer u.finishReadinessReadCallback()
 	read := false
 	messages := 0
@@ -90,19 +90,29 @@ func (u *Unsafe) readReady() {
 }
 
 func (u *Unsafe) finishReadinessReadCallback() {
-	u.readCallback = false
+	u.readCallback.Store(false)
+	locked := u.lockOutboundIfConcurrent()
 	if !u.deferredFlush {
+		if locked {
+			u.outboundMu.Unlock()
+		}
 		return
 	}
 	u.deferredFlush = false
 	if u.closed.Load() {
+		if locked {
+			u.outboundMu.Unlock()
+		}
 		return
 	}
 	var err error
 	if u.flushStrategy() == FlushOnEventLoopBatch && u.flushScheduler != nil {
 		err = u.scheduleFlush()
 	} else {
-		err = u.runPendingFlush()
+		err = u.runPendingFlushLocked()
+	}
+	if locked {
+		u.outboundMu.Unlock()
 	}
 	if err != nil {
 		u.failFlush(err)

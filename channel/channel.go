@@ -143,6 +143,9 @@ func (c *LocalChannel) FlushFuture() Future {
 
 func (c *LocalChannel) WriteAndFlush(msg any) error {
 	if executor := c.ownerExecutor(); executor != nil {
+		if handled, err := c.pipeline.tryWriteAndFlushConcurrent(msg); handled {
+			return err
+		}
 		return c.submitOwnerWriteAndFlush(executor, msg)
 	}
 	return c.pipeline.WriteAndFlush(msg)

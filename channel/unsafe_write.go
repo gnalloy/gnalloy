@@ -6,6 +6,14 @@ import (
 )
 
 func (u *Unsafe) Write(msg any) error {
+	locked := u.lockOutboundIfConcurrent()
+	if locked {
+		defer u.outboundMu.Unlock()
+	}
+	return u.writeLocked(msg)
+}
+
+func (u *Unsafe) writeLocked(msg any) error {
 	if u.closed.Load() {
 		releaseWriteMessage(msg)
 		return ErrPromiseFailed
@@ -23,6 +31,14 @@ func (u *Unsafe) Write(msg any) error {
 }
 
 func (u *Unsafe) WriteAndFlush(msg any) error {
+	locked := u.lockOutboundIfConcurrent()
+	if locked {
+		defer u.outboundMu.Unlock()
+	}
+	return u.writeAndFlushLocked(msg)
+}
+
+func (u *Unsafe) writeAndFlushLocked(msg any) error {
 	if u.closed.Load() {
 		releaseWriteMessage(msg)
 		return ErrPromiseFailed
@@ -46,10 +62,18 @@ func (u *Unsafe) WriteAndFlush(msg any) error {
 		}
 	}
 	u.enqueueOutboundMessage(out, nil)
-	return u.requestFlush()
+	return u.requestFlushLocked()
 }
 
 func (u *Unsafe) WriteStaticBytesAndFlush(data []byte) error {
+	locked := u.lockOutboundIfConcurrent()
+	if locked {
+		defer u.outboundMu.Unlock()
+	}
+	return u.writeStaticBytesAndFlushLocked(data)
+}
+
+func (u *Unsafe) writeStaticBytesAndFlushLocked(data []byte) error {
 	if u.closed.Load() {
 		return ErrPromiseFailed
 	}
@@ -66,10 +90,18 @@ func (u *Unsafe) WriteStaticBytesAndFlush(data []byte) error {
 			return err
 		}
 	}
-	return u.WriteAndFlush(buffer.NewSharedBuffer(data))
+	return u.writeAndFlushLocked(buffer.NewSharedBuffer(data))
 }
 
 func (u *Unsafe) WriteFuture(msg any) Future {
+	locked := u.lockOutboundIfConcurrent()
+	if locked {
+		defer u.outboundMu.Unlock()
+	}
+	return u.writeFutureLocked(msg)
+}
+
+func (u *Unsafe) writeFutureLocked(msg any) Future {
 	if u.closed.Load() {
 		releaseWriteMessage(msg)
 		return FailedFuture(ErrPromiseFailed)
@@ -89,11 +121,19 @@ func (u *Unsafe) WriteFuture(msg any) Future {
 }
 
 func (u *Unsafe) Flush() error {
+	locked := u.lockOutboundIfConcurrent()
+	if locked {
+		defer u.outboundMu.Unlock()
+	}
+	return u.flushLocked()
+}
+
+func (u *Unsafe) flushLocked() error {
 	if u.outHead == nil {
 		u.ch.Pipeline().FireFlushComplete()
 		return nil
 	}
-	if err := u.requestFlush(); err != nil {
+	if err := u.requestFlushLocked(); err != nil {
 		u.completeFlushWaiters(err)
 		return err
 	}
@@ -101,6 +141,14 @@ func (u *Unsafe) Flush() error {
 }
 
 func (u *Unsafe) FlushFuture() Future {
+	locked := u.lockOutboundIfConcurrent()
+	if locked {
+		defer u.outboundMu.Unlock()
+	}
+	return u.flushFutureLocked()
+}
+
+func (u *Unsafe) flushFutureLocked() Future {
 	promise := u.newPromise()
 	if u.outHead == nil {
 		promise.SetSuccess()
@@ -108,16 +156,75 @@ func (u *Unsafe) FlushFuture() Future {
 		return promise
 	}
 	u.flushWaiters = append(u.flushWaiters, promise)
-	if err := u.requestFlush(); err != nil {
+	if err := u.requestFlushLocked(); err != nil {
 		u.completeFlushWaiters(err)
 		return promise
 	}
 	return promise
 }
 
+// TryWriteAndFlushConcurrent 在 readiness 后端上串行化业务线程与 owner loop 的出站写。
+// 返回 false 表示调用方必须回退到 owner loop，且消息所有权仍属于调用方。
+func (u *Unsafe) TryWriteAndFlushConcurrent(msg any) (bool, error) {
+	if !u.concurrentWrite.Load() || u.poller == nil || u.poller.Model() == transport.PollerCompletion {
+		return false, nil
+	}
+	u.outboundMu.Lock()
+	defer u.outboundMu.Unlock()
+	if !u.concurrentWrite.Load() {
+		return false, nil
+	}
+	out, err := u.prepareOutboundMessage(msg)
+	if err != nil {
+		return true, err
+	}
+	if out.region != nil {
+		return false, nil
+	}
+
+	if u.closed.Load() {
+		out.release()
+		return true, ErrPromiseFailed
+	}
+	if out.bytes == 0 {
+		out.release()
+		return true, nil
+	}
+
+	u.flushPending = true
+	if u.outHead == nil {
+		if done, writeErr := u.tryWriteAndFlushDirect(out); done {
+			if u.outHead == nil {
+				u.flushPending = false
+			}
+			return true, writeErr
+		}
+	}
+	u.enqueueOutboundMessage(out, nil)
+	return true, u.flushReady()
+}
+
+func (u *Unsafe) setConcurrentWriteEnabled(enabled bool) {
+	if enabled {
+		u.concurrentWrite.Store(true)
+		return
+	}
+	u.outboundMu.Lock()
+	u.concurrentWrite.Store(false)
+	u.outboundMu.Unlock()
+}
+
+func (u *Unsafe) lockOutboundIfConcurrent() bool {
+	if !u.concurrentWrite.Load() {
+		return false
+	}
+	u.outboundMu.Lock()
+	return true
+}
+
 func (u *Unsafe) flushOutbound() error {
 	if u.poller != nil && u.poller.Model() == transport.PollerCompletion {
-		if u.readCallback {
+		if u.readCallback.Load() {
 			u.deferredFlush = true
 			return nil
 		}

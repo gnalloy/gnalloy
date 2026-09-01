@@ -1,6 +1,10 @@
 package channel
 
-import "gnalloy.org/gnalloy/message"
+import (
+	"sync/atomic"
+
+	"gnalloy.org/gnalloy/message"
+)
 
 type Pipeline struct {
 	ch                    Channel
@@ -9,6 +13,8 @@ type Pipeline struct {
 	outboundHandlers      int
 	readCompleteHandlers  int
 	flushCompleteHandlers int
+	writabilityHandlers   int
+	concurrentWrite       atomic.Bool
 	head                  *HandlerContext
 	tail                  *HandlerContext
 	names                 map[string]*HandlerContext
@@ -23,6 +29,7 @@ func NewPipeline(ch Channel, sink OutboundSink) *Pipeline {
 	if sink, ok := sink.(writeAndFlushSink); ok {
 		p.writeAndFlush = sink
 	}
+	p.refreshConcurrentWrite()
 	p.head = newHandlerContext(p, "$head", headHandler{})
 	p.tail = newHandlerContext(p, "$tail", tailHandler{})
 	p.head.next = p.tail
@@ -114,6 +121,7 @@ func (p *Pipeline) Replace(oldName string, newName string, h Handler) error {
 	}
 	replacement := newHandlerContext(p, newName, h)
 	prev, next := old.prev, old.next
+	p.disableConcurrentWrite()
 	prev.next = replacement
 	next.prev = replacement
 	replacement.prev = prev
@@ -234,6 +242,17 @@ func (p *Pipeline) WriteAndFlush(msg any) error {
 	return p.tail.WriteAndFlush(msg)
 }
 
+func (p *Pipeline) tryWriteAndFlushConcurrent(msg any) (bool, error) {
+	if p == nil || !p.concurrentWrite.Load() {
+		return false, nil
+	}
+	sink, ok := p.sink.(concurrentWriteAndFlushSink)
+	if !ok {
+		return false, nil
+	}
+	return sink.TryWriteAndFlushConcurrent(msg)
+}
+
 func (p *Pipeline) FlushFuture() Future {
 	return p.tail.FlushFuture()
 }
@@ -277,6 +296,7 @@ func (p *Pipeline) validateNewHandler(name string, h Handler) error {
 }
 
 func (p *Pipeline) linkBetween(prev *HandlerContext, next *HandlerContext, ctx *HandlerContext) {
+	p.disableConcurrentWrite()
 	prev.next = ctx
 	ctx.prev = prev
 	ctx.next = next
@@ -289,6 +309,7 @@ func (p *Pipeline) unlink(ctx *HandlerContext) error {
 	if ctx == nil || ctx == p.head || ctx == p.tail {
 		return ErrHandlerNotFound
 	}
+	p.disableConcurrentWrite()
 	if h, ok := ctx.handler.(HandlerRemovedHandler); ok {
 		if err := h.HandlerRemoved(ctx); err != nil {
 			return err
@@ -304,6 +325,11 @@ func (p *Pipeline) unlink(ctx *HandlerContext) error {
 }
 
 func (p *Pipeline) addHandlerCapabilities(ctx *HandlerContext) {
+	p.addHandlerCapabilitiesOnly(ctx)
+	p.refreshConcurrentWrite()
+}
+
+func (p *Pipeline) addHandlerCapabilitiesOnly(ctx *HandlerContext) {
 	if isOutboundContext(ctx) {
 		p.outboundHandlers++
 	}
@@ -313,9 +339,17 @@ func (p *Pipeline) addHandlerCapabilities(ctx *HandlerContext) {
 	if ctx.flushComplete != nil {
 		p.flushCompleteHandlers++
 	}
+	if ctx.channelWritabilityChanged != nil {
+		p.writabilityHandlers++
+	}
 }
 
 func (p *Pipeline) removeHandlerCapabilities(ctx *HandlerContext) {
+	p.removeHandlerCapabilitiesOnly(ctx)
+	p.refreshConcurrentWrite()
+}
+
+func (p *Pipeline) removeHandlerCapabilitiesOnly(ctx *HandlerContext) {
 	if isOutboundContext(ctx) && p.outboundHandlers > 0 {
 		p.outboundHandlers--
 	}
@@ -325,11 +359,31 @@ func (p *Pipeline) removeHandlerCapabilities(ctx *HandlerContext) {
 	if ctx.flushComplete != nil && p.flushCompleteHandlers > 0 {
 		p.flushCompleteHandlers--
 	}
+	if ctx.channelWritabilityChanged != nil && p.writabilityHandlers > 0 {
+		p.writabilityHandlers--
+	}
 }
 
 func (p *Pipeline) replaceHandlerCapabilities(old *HandlerContext, next *HandlerContext) {
-	p.removeHandlerCapabilities(old)
-	p.addHandlerCapabilities(next)
+	p.removeHandlerCapabilitiesOnly(old)
+	p.addHandlerCapabilitiesOnly(next)
+	p.refreshConcurrentWrite()
+}
+
+func (p *Pipeline) refreshConcurrentWrite() {
+	_, supported := p.sink.(concurrentWriteAndFlushSink)
+	enabled := supported && p.outboundHandlers == 0 && p.flushCompleteHandlers == 0 && p.writabilityHandlers == 0
+	p.concurrentWrite.Store(enabled)
+	if control, ok := p.sink.(concurrentWriteControl); ok {
+		control.setConcurrentWriteEnabled(enabled)
+	}
+}
+
+func (p *Pipeline) disableConcurrentWrite() {
+	p.concurrentWrite.Store(false)
+	if control, ok := p.sink.(concurrentWriteControl); ok {
+		control.setConcurrentWriteEnabled(false)
+	}
 }
 
 func isOutboundContext(ctx *HandlerContext) bool {

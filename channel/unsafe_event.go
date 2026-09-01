@@ -94,7 +94,7 @@ func (u *Unsafe) handleCompletion(ev transport.PollEvent) {
 			return
 		}
 		read := false
-		u.readCallback = true
+		u.readCallback.Store(true)
 		if ev.N > 0 && ev.Buf != nil {
 			u.ch.Pipeline().FireChannelRead(ev.Buf)
 			read = true
@@ -104,7 +104,7 @@ func (u *Unsafe) handleCompletion(ev transport.PollEvent) {
 		if read {
 			u.ch.Pipeline().FireChannelReadComplete()
 		}
-		u.readCallback = false
+		u.readCallback.Store(false)
 		if ev.N == 0 {
 			u.deferredFlush = false
 			_ = u.Close()

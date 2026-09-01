@@ -13,6 +13,14 @@ type staticBytesWriteAndFlushSink interface {
 	WriteStaticBytesAndFlush(data []byte) error
 }
 
+type concurrentWriteAndFlushSink interface {
+	TryWriteAndFlushConcurrent(msg any) (bool, error)
+}
+
+type concurrentWriteControl interface {
+	setConcurrentWriteEnabled(enabled bool)
+}
+
 type HandlerContext struct {
 	pipeline *Pipeline
 	name     string

@@ -15,7 +15,11 @@ func (u *Unsafe) CloseFuture() Future {
 		return u.closePromise
 	}
 	u.closeWritability()
-	u.releaseOutbound()
+	locked := u.lockOutboundIfConcurrent()
+	u.releaseOutboundLocked()
+	if locked {
+		u.outboundMu.Unlock()
+	}
 	if u.registered.Load() && u.poller != nil && (u.poller.Backend() == transport.BackendIOUring || u.poller.Backend() == transport.BackendIOCP) {
 		if err := u.poller.Submit(transport.IORequest{Op: transport.OpClose, FD: u.fd, ChannelID: u.ID()}); err == nil {
 			return u.closePromise
@@ -36,7 +40,11 @@ func (u *Unsafe) CloseFuture() Future {
 
 func (u *Unsafe) finishClose() {
 	if u.closed.CompareAndSwap(false, true) {
-		u.releaseOutbound()
+		locked := u.lockOutboundIfConcurrent()
+		u.releaseOutboundLocked()
+		if locked {
+			u.outboundMu.Unlock()
+		}
 	}
 	u.fireInactiveOnce()
 }

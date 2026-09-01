@@ -3,7 +3,7 @@ package channel
 import "gnalloy.org/gnalloy/transport"
 
 func (u *Unsafe) canTryImmediateWrite() bool {
-	if u.readCallback && u.flushStrategy() != FlushImmediate {
+	if u.readCallback.Load() && u.flushStrategy() != FlushImmediate {
 		return false
 	}
 	if u.flushScheduler == nil {
@@ -12,37 +12,37 @@ func (u *Unsafe) canTryImmediateWrite() bool {
 	return u.flushStrategy() == FlushImmediate
 }
 
-func (u *Unsafe) requestFlush() error {
+func (u *Unsafe) requestFlushLocked() error {
 	if u.outHead == nil {
 		u.flushPending = false
 		u.ch.Pipeline().FireFlushComplete()
 		return nil
 	}
 	u.flushPending = true
-	if u.poller != nil && u.poller.Model() == transport.PollerCompletion && u.readCallback {
+	if u.poller != nil && u.poller.Model() == transport.PollerCompletion && u.readCallback.Load() {
 		u.deferredFlush = true
 		return nil
 	}
 	switch u.flushStrategy() {
 	case FlushImmediate:
-		return u.runPendingFlush()
+		return u.runPendingFlushLocked()
 	case FlushOnReadComplete:
-		if u.readCallback {
+		if u.readCallback.Load() {
 			u.deferredFlush = true
 			return nil
 		}
-		return u.runPendingFlush()
+		return u.runPendingFlushLocked()
 	case FlushOnEventLoopBatch:
 		if u.flushScheduler != nil {
 			return u.scheduleFlush()
 		}
-		if u.readCallback {
+		if u.readCallback.Load() {
 			u.deferredFlush = true
 			return nil
 		}
-		return u.runPendingFlush()
+		return u.runPendingFlushLocked()
 	default:
-		return u.runPendingFlush()
+		return u.runPendingFlushLocked()
 	}
 }
 
@@ -66,6 +66,14 @@ func (u *Unsafe) executeScheduledFlush() {
 }
 
 func (u *Unsafe) runPendingFlush() error {
+	locked := u.lockOutboundIfConcurrent()
+	if locked {
+		defer u.outboundMu.Unlock()
+	}
+	return u.runPendingFlushLocked()
+}
+
+func (u *Unsafe) runPendingFlushLocked() error {
 	u.flushScheduled = false
 	if !u.flushPending {
 		return nil

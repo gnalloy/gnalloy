@@ -129,7 +129,7 @@ func (u *Unsafe) disableWriteInterest() error {
 	return u.poller.Modify(u.fd, u.readInterest())
 }
 
-func (u *Unsafe) releaseOutbound() {
+func (u *Unsafe) releaseOutboundLocked() {
 	u.flushPending = false
 	u.flushScheduled = false
 	u.deferredFlush = false
