@@ -67,6 +67,7 @@ type LocalChannel struct {
 	options  *ChannelOptions
 
 	eventExecutor atomic.Value
+	ownerWrites   ownerWriteQueue
 }
 
 func NewLocalChannel(id transport.ChannelID, alloc buffer.Allocator, sink OutboundSink) *LocalChannel {
@@ -141,12 +142,8 @@ func (c *LocalChannel) FlushFuture() Future {
 }
 
 func (c *LocalChannel) WriteAndFlush(msg any) error {
-	if c.ownerExecutor() != nil {
-		future := c.WriteAndFlushFuture(msg)
-		if future.IsDone() {
-			return future.Err()
-		}
-		return nil
+	if executor := c.ownerExecutor(); executor != nil {
+		return c.submitOwnerWriteAndFlush(executor, msg)
 	}
 	return c.pipeline.WriteAndFlush(msg)
 }

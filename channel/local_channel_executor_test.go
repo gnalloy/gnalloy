@@ -3,6 +3,7 @@ package channel
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"gnalloy.org/gnalloy/buffer"
@@ -17,6 +18,28 @@ type ownerLoopSink struct {
 	writes  []any
 	flushes int
 	closed  bool
+}
+
+type recordingOwnerExecutor struct {
+	tasks []transport.Task
+	err   error
+}
+
+func (e *recordingOwnerExecutor) Submit(task transport.Task) error {
+	if e.err != nil {
+		return e.err
+	}
+	e.tasks = append(e.tasks, task)
+	return nil
+}
+
+func (e *recordingOwnerExecutor) drain() {
+	for len(e.tasks) > 0 {
+		task := e.tasks[0]
+		copy(e.tasks, e.tasks[1:])
+		e.tasks = e.tasks[:len(e.tasks)-1]
+		task()
+	}
 }
 
 func (s *ownerLoopSink) ID() transport.ChannelID {
@@ -79,6 +102,102 @@ func TestLocalChannelWriteAndFlushFutureRunsOnBoundEventLoop(t *testing.T) {
 	}
 	if len(sink.writes) != 1 || sink.writes[0] != "payload" || sink.flushes != 1 {
 		t.Fatalf("sink writes=%v flushes=%d, want one write and one flush", sink.writes, sink.flushes)
+	}
+}
+
+func TestLocalChannelWriteAndFlushCoalescesOwnerTasks(t *testing.T) {
+	executor := &recordingOwnerExecutor{}
+	sink := &ownerLoopSink{id: 10, fd: transport.FDRef{FD: 100}}
+	ch := NewLocalChannel(sink.id, buffer.NewHeapAllocator(), sink)
+	ch.BindEventExecutor(executor)
+
+	if err := ch.WriteAndFlush("first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.WriteAndFlush("second"); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.tasks) != 1 {
+		t.Fatalf("tasks=%d, want 1", len(executor.tasks))
+	}
+	executor.drain()
+	if len(sink.writes) != 2 || sink.writes[0] != "first" || sink.writes[1] != "second" {
+		t.Fatalf("writes=%v, want [first second]", sink.writes)
+	}
+	if sink.flushes != 2 {
+		t.Fatalf("flushes=%d, want 2", sink.flushes)
+	}
+}
+
+func TestLocalChannelWriteAndFlushReleasesMessageWhenOwnerRejectsTask(t *testing.T) {
+	wantErr := errors.New("executor rejected task")
+	executor := &recordingOwnerExecutor{err: wantErr}
+	sink := &ownerLoopSink{id: 11, fd: transport.FDRef{FD: 101}}
+	ch := NewLocalChannel(sink.id, buffer.NewHeapAllocator(), sink)
+	ch.BindEventExecutor(executor)
+	buf := buffer.NewHeapBuffer(4)
+	if _, err := buf.WriteBytes([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ch.WriteAndFlush(buf); !errors.Is(err, wantErr) {
+		t.Fatalf("err=%v, want %v", err, wantErr)
+	}
+	if buf.RefCnt() != 0 {
+		t.Fatalf("ref=%d, want released buffer", buf.RefCnt())
+	}
+}
+
+func TestLocalChannelWriteAndFlushAcceptsConcurrentProducers(t *testing.T) {
+	executor := &recordingOwnerExecutor{}
+	sink := &ownerLoopSink{id: 12, fd: transport.FDRef{FD: 102}}
+	ch := NewLocalChannel(sink.id, buffer.NewHeapAllocator(), sink)
+	ch.BindEventExecutor(executor)
+	const producers = 8
+	const messages = 100
+	var wg sync.WaitGroup
+	wg.Add(producers)
+	for producer := 0; producer < producers; producer++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < messages; i++ {
+				if err := ch.WriteAndFlush("payload"); err != nil {
+					t.Errorf("write: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if len(executor.tasks) != 1 {
+		t.Fatalf("tasks=%d, want 1", len(executor.tasks))
+	}
+	executor.drain()
+	if len(sink.writes) != producers*messages {
+		t.Fatalf("writes=%d, want %d", len(sink.writes), producers*messages)
+	}
+}
+
+func BenchmarkLocalChannelWriteAndFlushOwnerQueue(b *testing.B) {
+	executor := &recordingOwnerExecutor{}
+	sink := &ownerLoopSink{id: 13, fd: transport.FDRef{FD: 103}}
+	ch := NewLocalChannel(sink.id, buffer.NewHeapAllocator(), sink)
+	ch.BindEventExecutor(executor)
+	payload := &struct{}{}
+	if err := ch.WriteAndFlush(payload); err != nil {
+		b.Fatal(err)
+	}
+	executor.drain()
+	sink.writes = make([]any, 0, 1)
+	sink.flushes = 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := ch.WriteAndFlush(payload); err != nil {
+			b.Fatal(err)
+		}
+		executor.drain()
+		sink.writes = sink.writes[:0]
 	}
 }
 
