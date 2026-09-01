@@ -57,6 +57,7 @@ type Unsafe struct {
 	fileRegionWriter FileRegionWriter
 	closeHook        func(*Unsafe)
 	readBufferSize   int
+	readBufferSizer  readBufferSizer
 	fixedBuffers     bool
 	registered       atomic.Bool
 	closed           atomic.Bool
@@ -114,6 +115,7 @@ func NewUnsafeChannel(cfg UnsafeConfig) (*LocalChannel, *Unsafe) {
 		fileRegionWriter:   cfg.FileRegionWriter,
 		closeHook:          cfg.CloseHook,
 		readBufferSize:     readBufferSize,
+		readBufferSizer:    newReadBufferSizer(readBufferSize),
 		fixedBuffers:       cfg.FixedBuffers,
 		vectorWriter:       vectorWriterOf(cfg.ReadWriter),
 		closePromise:       NewPromise(),
@@ -168,6 +170,8 @@ func (u *Unsafe) bindOptionCache() {
 
 func (u *Unsafe) applyOptionUpdate(key optionKeyID, value any, present bool) {
 	switch key {
+	case OptionReadBufferSize.name:
+		u.cacheReadBufferSize(value, present)
 	case OptionAutoRead.name:
 		u.cacheAutoRead(value, present)
 	case OptionWriteSpinCount.name:
@@ -177,6 +181,17 @@ func (u *Unsafe) applyOptionUpdate(key optionKeyID, value any, present bool) {
 	case OptionFlushStrategy.name:
 		u.cacheFlushStrategy(value, present)
 	}
+}
+
+func (u *Unsafe) cacheReadBufferSize(value any, present bool) {
+	v := defaultReadBufferSize
+	if present {
+		if typed, ok := value.(int); ok && typed > 0 {
+			v = typed
+		}
+	}
+	u.readBufferSize = v
+	u.readBufferSizer.reset(v)
 }
 
 func (u *Unsafe) cacheAutoRead(value any, present bool) {

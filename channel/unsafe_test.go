@@ -152,12 +152,14 @@ type readStep struct {
 }
 
 type scriptedReadRW struct {
-	steps []readStep
-	reads int
+	steps    []readStep
+	reads    int
+	attempts []int
 }
 
 func (rw *scriptedReadRW) Read(_ transport.FDRef, dst []byte) (int, bool, error) {
 	rw.reads++
+	rw.attempts = append(rw.attempts, len(dst))
 	if len(rw.steps) == 0 {
 		return 0, true, nil
 	}
@@ -430,6 +432,7 @@ func TestUnsafeEventLoopBatchFlushSchedulesOnce(t *testing.T) {
 		ReadWriter:     rw,
 		ReadBufferSize: 16,
 	})
+	OptionFlushStrategy.Set(ch.Options(), FlushOnEventLoopBatch)
 	scheduler := &recordingTailSubmitter{}
 	unsafeCh.BindEventExecutor(scheduler)
 	probe := &readFlushProbe{rw: rw}

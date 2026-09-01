@@ -85,6 +85,7 @@ func (u *Unsafe) handleCompletion(ev transport.PollEvent) {
 	switch ev.Op {
 	case transport.OpRead:
 		u.readPending = false
+		u.recordReadBuffer(int(ev.N), readAttemptedSize(ev.Buf))
 		if ev.Err != nil {
 			if ev.Buf != nil {
 				ev.Buf.Release()

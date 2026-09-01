@@ -41,7 +41,7 @@ func (u *Unsafe) readReady() {
 	messages := 0
 	maxMessages := u.maxMessagesPerRead()
 	for !u.closed.Load() && messages < maxMessages {
-		buf, err := u.ch.Allocator().Acquire(u.readBufferSize)
+		buf, err := u.ch.Allocator().Acquire(u.nextReadBufferSize())
 		if err != nil {
 			u.fail(err)
 			return
@@ -50,6 +50,7 @@ func (u *Unsafe) readReady() {
 		attempted := len(view)
 		n, again, err := u.rw.Read(u.fd, view)
 		if n > 0 {
+			u.recordReadBuffer(n, attempted)
 			if advErr := buf.AdvanceWriter(n); advErr != nil {
 				buf.Release()
 				u.fail(advErr)
@@ -131,7 +132,7 @@ func shouldStopAfterShortRead(n int, attempted int) bool {
 }
 
 func (u *Unsafe) prepareReadRequest() (transport.IORequest, buffer.ByteBuf, error) {
-	buf, err := u.ch.Allocator().Acquire(u.readBufferSize)
+	buf, err := u.ch.Allocator().Acquire(u.nextReadBufferSize())
 	if err != nil {
 		return transport.IORequest{}, nil, err
 	}
@@ -158,6 +159,14 @@ func (u *Unsafe) maxMessagesPerRead() int {
 		return 1
 	}
 	return maxMessages
+}
+
+func (u *Unsafe) nextReadBufferSize() int {
+	return u.readBufferSizer.nextSize()
+}
+
+func (u *Unsafe) recordReadBuffer(n int, attempted int) {
+	u.readBufferSizer.record(n, attempted)
 }
 
 func (u *Unsafe) prepareIORequest(req transport.IORequest) transport.IORequest {

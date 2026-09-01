@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"strings"
 	"testing"
 
 	"gnalloy.org/gnalloy/buffer"
@@ -113,5 +114,78 @@ func TestShouldStopAfterShortRead(t *testing.T) {
 				t.Fatalf("shouldStopAfterShortRead(%d, %d)=%t, want %t", tt.n, tt.attempted, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReadBufferSizerAdaptsWithinBounds(t *testing.T) {
+	sizer := newReadBufferSizer(defaultReadBufferSize)
+	if got := sizer.nextSize(); got != defaultInitialReadBufferSize {
+		t.Fatalf("initial size=%d, want %d", got, defaultInitialReadBufferSize)
+	}
+
+	sizer.record(defaultInitialReadBufferSize, defaultInitialReadBufferSize)
+	if got := sizer.nextSize(); got != defaultInitialReadBufferSize*2 {
+		t.Fatalf("grown size=%d, want %d", got, defaultInitialReadBufferSize*2)
+	}
+
+	sizer.record(64, defaultInitialReadBufferSize*2)
+	if got := sizer.nextSize(); got != defaultInitialReadBufferSize {
+		t.Fatalf("shrunk size=%d, want %d", got, defaultInitialReadBufferSize)
+	}
+}
+
+func TestReadBufferSizerHonorsSmallExplicitLimit(t *testing.T) {
+	sizer := newReadBufferSizer(128)
+	if got := sizer.nextSize(); got != 128 {
+		t.Fatalf("initial size=%d, want explicit limit", got)
+	}
+	sizer.record(128, 128)
+	if got := sizer.nextSize(); got != 128 {
+		t.Fatalf("grown size=%d, want explicit limit", got)
+	}
+}
+
+func TestUnsafeReadinessUsesAdaptiveReadBufferSize(t *testing.T) {
+	rw := &scriptedReadRW{steps: []readStep{
+		{data: strings.Repeat("a", defaultInitialReadBufferSize)},
+		{data: "b"},
+	}}
+	ch, _ := NewUnsafeChannel(UnsafeConfig{
+		ID:             1,
+		FD:             transport.FDRef{FD: 1},
+		Allocator:      buffer.NewHeapAllocator(),
+		Poller:         &fakeReadyPoller{},
+		ReadWriter:     rw,
+		ReadBufferSize: defaultReadBufferSize,
+	})
+	reader := &releaseReadHandler{}
+	if err := ch.Pipeline().AddLast("reader", reader); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ch.Read(); err != nil {
+		t.Fatal(err)
+	}
+	if len(rw.attempts) != 2 {
+		t.Fatalf("attempts=%v, want two reads", rw.attempts)
+	}
+	if rw.attempts[0] != defaultInitialReadBufferSize || rw.attempts[1] != defaultInitialReadBufferSize*2 {
+		t.Fatalf("attempts=%v, want adaptive growth", rw.attempts)
+	}
+}
+
+func TestUnsafeReadBufferSizeOptionResetsSizer(t *testing.T) {
+	rw := &scriptedReadRW{steps: []readStep{{data: "a"}}}
+	ch, unsafeCh := NewUnsafeChannel(UnsafeConfig{
+		ID:             1,
+		FD:             transport.FDRef{FD: 1},
+		Allocator:      buffer.NewHeapAllocator(),
+		Poller:         &fakeReadyPoller{},
+		ReadWriter:     rw,
+		ReadBufferSize: defaultReadBufferSize,
+	})
+	OptionReadBufferSize.Set(ch.Options(), 128)
+	if got := unsafeCh.nextReadBufferSize(); got != 128 {
+		t.Fatalf("next read size=%d, want 128", got)
 	}
 }

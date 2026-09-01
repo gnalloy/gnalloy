@@ -4,6 +4,8 @@ import "gnalloy.org/gnalloy/transport"
 
 type optionKeyID string
 
+const defaultMaxMessagesPerRead = 32
+
 // ChannelOption 是 Netty ChannelOption 的 Go 化类型安全版本。
 type ChannelOption[T any] struct {
 	name         optionKeyID
@@ -13,7 +15,7 @@ type ChannelOption[T any] struct {
 var (
 	// OptionAutoRead 控制 Channel 激活后是否自动注册读兴趣。
 	OptionAutoRead = NewChannelOption("AUTO_READ", true)
-	// OptionReadBufferSize 控制单次底层读缓冲区大小，0 表示使用传输默认值。
+	// OptionReadBufferSize 控制单次底层读缓冲区上限，0 表示使用传输默认值。
 	OptionReadBufferSize = NewChannelOption("READ_BUFFER_SIZE", 0)
 	// OptionWriteBufferWatermark 控制出站缓冲区的高低水位线。
 	OptionWriteBufferWatermark = NewChannelOption("WRITE_BUFFER_WATERMARK", transport.DefaultWriteBufferWatermark())
@@ -38,9 +40,9 @@ var (
 	// OptionWriteSpinCount 控制单次可写事件内的出站写重试次数。
 	OptionWriteSpinCount = NewChannelOption("WRITE_SPIN_COUNT", 16)
 	// OptionMaxMessagesPerRead 控制单次可读事件最多连续读取的消息数。
-	OptionMaxMessagesPerRead = NewChannelOption("MAX_MESSAGES_PER_READ", 16)
+	OptionMaxMessagesPerRead = NewChannelOption("MAX_MESSAGES_PER_READ", defaultMaxMessagesPerRead)
 	// OptionFlushStrategy 控制出站 flush 请求在 EventLoop 周期内的执行时机。
-	OptionFlushStrategy = NewChannelOption("FLUSH_STRATEGY", FlushOnEventLoopBatch)
+	OptionFlushStrategy = NewChannelOption("FLUSH_STRATEGY", FlushOnReadComplete)
 )
 
 func NewChannelOption[T any](name string, defaultValue T) ChannelOption[T] {
