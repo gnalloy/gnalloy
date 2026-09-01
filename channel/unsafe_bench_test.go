@@ -89,6 +89,32 @@ func BenchmarkUnsafeWriteAndFlushDrained(b *testing.B) {
 	}
 }
 
+func BenchmarkUnsafeEventLoopBatchFlushDrained(b *testing.B) {
+	rw := &benchVectorWriteRW{}
+	ch, unsafeCh := NewUnsafeChannel(UnsafeConfig{
+		ID:         1,
+		FD:         transport.FDRef{FD: 1},
+		Allocator:  buffer.NewHeapAllocator(),
+		Poller:     &fakeReadyPoller{},
+		ReadWriter: rw,
+	})
+	scheduler := &recordingTailSubmitter{}
+	unsafeCh.BindEventExecutor(scheduler)
+	OptionFlushStrategy.Set(ch.Options(), FlushOnEventLoopBatch)
+	payload := buffer.NewSharedBuffer([]byte("benchmark"))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		payload.Retain()
+		if err := unsafeCh.WriteAndFlush(payload); err != nil {
+			b.Fatal(err)
+		}
+		scheduler.drain()
+	}
+	b.StopTimer()
+	payload.Release()
+}
+
 func BenchmarkUnsafeFileRegionDirectWriterDrained(b *testing.B) {
 	payload := bytes.Repeat([]byte("0123456789abcdef"), 4096)
 	writer := &benchFileRegionWriter{}

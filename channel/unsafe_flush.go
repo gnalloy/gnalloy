@@ -51,16 +51,18 @@ func (u *Unsafe) scheduleFlush() error {
 		return nil
 	}
 	u.flushScheduled = true
-	err := u.flushScheduler.SubmitAfterBatch(func() {
-		if err := u.runPendingFlush(); err != nil {
-			u.failFlush(err)
-		}
-	})
+	err := u.flushScheduler.SubmitAfterBatch(u.flushTask)
 	if err != nil {
 		u.flushScheduled = false
 		return err
 	}
 	return nil
+}
+
+func (u *Unsafe) executeScheduledFlush() {
+	if err := u.runPendingFlush(); err != nil {
+		u.failFlush(err)
+	}
 }
 
 func (u *Unsafe) runPendingFlush() error {

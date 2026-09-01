@@ -76,6 +76,7 @@ type Unsafe struct {
 	flushPending   bool
 	flushScheduled bool
 	flushScheduler eventLoopTailSubmitter
+	flushTask      transport.Task
 	vectorWriter   FDVectorWriter
 	writeBatch     []buffer.ByteBuf
 	writeSlices    [][]byte
@@ -122,6 +123,7 @@ func NewUnsafeChannel(cfg UnsafeConfig) (*LocalChannel, *Unsafe) {
 		writeHighWatermark: int64(watermark.High),
 		writeLowWatermark:  int64(watermark.Low),
 	}
+	u.flushTask = u.executeScheduledFlush
 	u.writable.Store(true)
 	u.ch = NewLocalChannelWithTimer(cfg.ID, cfg.Allocator, u, cfg.Timer)
 	u.bindOptionCache()
