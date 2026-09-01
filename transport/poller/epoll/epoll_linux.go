@@ -92,7 +92,8 @@ func (p *Poller) Poll(dst []poller.Event, timeoutMillis int) (int, error) {
 	if len(dst) == 0 {
 		return 0, nil
 	}
-	n, err := unix.EpollWait(p.epfd, p.events, timeoutMillis)
+	events := epollWaitBuffer(p.events, len(dst))
+	n, err := unix.EpollWait(p.epfd, events, timeoutMillis)
 	if err != nil {
 		if errors.Is(err, unix.EINTR) {
 			return 0, nil
@@ -101,14 +102,14 @@ func (p *Poller) Poll(dst []poller.Event, timeoutMillis int) (int, error) {
 	}
 	out := 0
 	for i := 0; i < n && out < len(dst); i++ {
-		fd := int(p.events[i].Fd)
+		fd := int(events[i].Fd)
 		if fd == p.wakefd {
 			p.drainWakeup()
 			dst[out] = poller.Event{Model: poller.Readiness, Op: poller.OpWakeup, FD: poller.FDRef{FD: fd}, Ready: poller.ReadyRead}
 			out++
 			continue
 		}
-		ready := epollReady(p.events[i].Events)
+		ready := epollReady(events[i].Events)
 		dst[out] = poller.Event{
 			Model:     poller.Readiness,
 			Op:        poller.ReadinessOp(ready),
@@ -119,6 +120,13 @@ func (p *Poller) Poll(dst []poller.Event, timeoutMillis int) (int, error) {
 		out++
 	}
 	return out, nil
+}
+
+func epollWaitBuffer(events []unix.EpollEvent, dstLen int) []unix.EpollEvent {
+	if dstLen < len(events) {
+		return events[:dstLen]
+	}
+	return events
 }
 
 func (p *Poller) Wakeup() error {
