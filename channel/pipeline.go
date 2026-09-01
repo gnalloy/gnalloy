@@ -3,13 +3,15 @@ package channel
 import "gnalloy.org/gnalloy/message"
 
 type Pipeline struct {
-	ch               Channel
-	sink             OutboundSink
-	writeAndFlush    writeAndFlushSink
-	outboundHandlers int
-	head             *HandlerContext
-	tail             *HandlerContext
-	names            map[string]*HandlerContext
+	ch                    Channel
+	sink                  OutboundSink
+	writeAndFlush         writeAndFlushSink
+	outboundHandlers      int
+	readCompleteHandlers  int
+	flushCompleteHandlers int
+	head                  *HandlerContext
+	tail                  *HandlerContext
+	names                 map[string]*HandlerContext
 }
 
 func NewPipeline(ch Channel, sink OutboundSink) *Pipeline {
@@ -118,7 +120,7 @@ func (p *Pipeline) Replace(oldName string, newName string, h Handler) error {
 	replacement.next = next
 	delete(p.names, oldName)
 	p.names[newName] = replacement
-	p.replaceOutboundHandler(old.handler, h)
+	p.replaceHandlerCapabilities(old, replacement)
 	old.prev = nil
 	old.next = nil
 	if err := p.callHandlerAdded(replacement); err != nil {
@@ -191,6 +193,9 @@ func (p *Pipeline) FireChannelRead(msg any) {
 }
 
 func (p *Pipeline) FireChannelReadComplete() {
+	if p.readCompleteHandlers == 0 {
+		return
+	}
 	p.head.FireChannelReadComplete()
 }
 
@@ -211,6 +216,9 @@ func (p *Pipeline) FireExceptionCaught(err error) {
 }
 
 func (p *Pipeline) FireFlushComplete() {
+	if p.flushCompleteHandlers == 0 {
+		return
+	}
 	p.head.FireFlushComplete()
 }
 
@@ -274,7 +282,7 @@ func (p *Pipeline) linkBetween(prev *HandlerContext, next *HandlerContext, ctx *
 	ctx.next = next
 	next.prev = ctx
 	p.names[ctx.name] = ctx
-	p.addOutboundHandler(ctx.handler)
+	p.addHandlerCapabilities(ctx)
 }
 
 func (p *Pipeline) unlink(ctx *HandlerContext) error {
@@ -291,41 +299,41 @@ func (p *Pipeline) unlink(ctx *HandlerContext) error {
 	ctx.prev = nil
 	ctx.next = nil
 	delete(p.names, ctx.name)
-	p.removeOutboundHandler(ctx.handler)
+	p.removeHandlerCapabilities(ctx)
 	return nil
 }
 
-func (p *Pipeline) addOutboundHandler(h Handler) {
-	if isOutboundHandler(h) {
+func (p *Pipeline) addHandlerCapabilities(ctx *HandlerContext) {
+	if isOutboundContext(ctx) {
 		p.outboundHandlers++
 	}
+	if ctx.channelReadComplete != nil {
+		p.readCompleteHandlers++
+	}
+	if ctx.flushComplete != nil {
+		p.flushCompleteHandlers++
+	}
 }
 
-func (p *Pipeline) removeOutboundHandler(h Handler) {
-	if isOutboundHandler(h) && p.outboundHandlers > 0 {
+func (p *Pipeline) removeHandlerCapabilities(ctx *HandlerContext) {
+	if isOutboundContext(ctx) && p.outboundHandlers > 0 {
 		p.outboundHandlers--
 	}
-}
-
-func (p *Pipeline) replaceOutboundHandler(old Handler, next Handler) {
-	oldOutbound := isOutboundHandler(old)
-	nextOutbound := isOutboundHandler(next)
-	switch {
-	case oldOutbound && !nextOutbound && p.outboundHandlers > 0:
-		p.outboundHandlers--
-	case !oldOutbound && nextOutbound:
-		p.outboundHandlers++
+	if ctx.channelReadComplete != nil && p.readCompleteHandlers > 0 {
+		p.readCompleteHandlers--
+	}
+	if ctx.flushComplete != nil && p.flushCompleteHandlers > 0 {
+		p.flushCompleteHandlers--
 	}
 }
 
-func isOutboundHandler(h Handler) bool {
-	if _, ok := h.(WriteHandler); ok {
-		return true
-	}
-	if _, ok := h.(FlushHandler); ok {
-		return true
-	}
-	return false
+func (p *Pipeline) replaceHandlerCapabilities(old *HandlerContext, next *HandlerContext) {
+	p.removeHandlerCapabilities(old)
+	p.addHandlerCapabilities(next)
+}
+
+func isOutboundContext(ctx *HandlerContext) bool {
+	return ctx != nil && (ctx.write != nil || ctx.flush != nil)
 }
 
 type headHandler struct{}

@@ -108,6 +108,22 @@ func (h *futureOutboundRecorder) CloseFuture(_ *HandlerContext) Future {
 	return SucceededFuture()
 }
 
+type pipelineReadCompleteRecorder struct {
+	calls int
+}
+
+func (h *pipelineReadCompleteRecorder) ChannelReadComplete(*HandlerContext) {
+	h.calls++
+}
+
+type pipelineFlushCompleteRecorder struct {
+	calls int
+}
+
+func (h *pipelineFlushCompleteRecorder) FlushComplete(*HandlerContext) {
+	h.calls++
+}
+
 func TestPipelineInboundPropagation(t *testing.T) {
 	ch := NewLocalChannel(1, buffer.NewHeapAllocator(), &captureSink{})
 	capture := &captureInbound{}
@@ -254,6 +270,38 @@ func TestPipelineFutureHandlers(t *testing.T) {
 	}
 	if len(sink.writes) != 0 || sink.flushed || sink.closed {
 		t.Fatalf("sink should not be reached: %+v", sink)
+	}
+}
+
+func TestPipelineCompletionHandlerCounters(t *testing.T) {
+	ch := NewLocalChannel(1, buffer.NewHeapAllocator(), &captureSink{})
+	ch.Pipeline().FireChannelReadComplete()
+	ch.Pipeline().FireFlushComplete()
+
+	readComplete := &pipelineReadCompleteRecorder{}
+	flushComplete := &pipelineFlushCompleteRecorder{}
+	if err := ch.Pipeline().AddLast("read-complete", readComplete); err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.Pipeline().AddLast("flush-complete", flushComplete); err != nil {
+		t.Fatal(err)
+	}
+	ch.Pipeline().FireChannelReadComplete()
+	ch.Pipeline().FireFlushComplete()
+	if readComplete.calls != 1 || flushComplete.calls != 1 {
+		t.Fatalf("completion calls=%d/%d, want 1/1", readComplete.calls, flushComplete.calls)
+	}
+
+	if err := ch.Pipeline().Replace("read-complete", "inbound", forwardingInbound{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.Pipeline().Remove("flush-complete"); err != nil {
+		t.Fatal(err)
+	}
+	ch.Pipeline().FireChannelReadComplete()
+	ch.Pipeline().FireFlushComplete()
+	if readComplete.calls != 1 || flushComplete.calls != 1 {
+		t.Fatalf("completion calls after remove=%d/%d, want 1/1", readComplete.calls, flushComplete.calls)
 	}
 }
 
