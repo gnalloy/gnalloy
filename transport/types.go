@@ -44,6 +44,8 @@ const (
 	ReadyWrite  = poller.ReadyWrite
 	ReadyHangup = poller.ReadyHangup
 	ReadyError  = poller.ReadyError
+	// ReadyLevelTriggered 请求 readiness 后端使用水平触发。
+	ReadyLevelTriggered = poller.ReadyLevelTriggered
 
 	SocketFamilyIPv4 = poller.SocketFamilyIPv4
 	SocketFamilyIPv6 = poller.SocketFamilyIPv6

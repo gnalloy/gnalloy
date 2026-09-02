@@ -181,7 +181,10 @@ func (p *Poller) drainWakeup() {
 }
 
 func epollEvents(mask poller.ReadyMask) uint32 {
-	events := uint32(unix.EPOLLET | unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP)
+	events := uint32(unix.EPOLLERR | unix.EPOLLHUP | unix.EPOLLRDHUP)
+	if mask&poller.ReadyLevelTriggered == 0 {
+		events |= unix.EPOLLET
+	}
 	if mask&poller.ReadyRead != 0 {
 		events |= unix.EPOLLIN
 	}

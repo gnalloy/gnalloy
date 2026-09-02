@@ -75,6 +75,8 @@ const (
 	ReadyWrite
 	ReadyHangup
 	ReadyError
+	// ReadyLevelTriggered 请求 readiness 后端使用水平触发；不支持的后端可忽略。
+	ReadyLevelTriggered
 )
 
 type BackendKind uint8

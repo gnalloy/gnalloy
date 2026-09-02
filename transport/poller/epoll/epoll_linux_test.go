@@ -5,6 +5,7 @@ package epoll
 import (
 	"testing"
 
+	"gnalloy.org/gnalloy/transport/poller"
 	"golang.org/x/sys/unix"
 )
 
@@ -24,5 +25,22 @@ func TestEpollWaitBufferKeepsStorageWhenDestinationIsLarger(t *testing.T) {
 	got := epollWaitBuffer(events, 16)
 	if len(got) != len(events) {
 		t.Fatalf("len=%d, want %d", len(got), len(events))
+	}
+}
+
+func TestEpollEventsDefaultsToEdgeTriggered(t *testing.T) {
+	events := epollEvents(poller.ReadyRead)
+	if events&unix.EPOLLET == 0 {
+		t.Fatalf("events=%#x, want EPOLLET", events)
+	}
+}
+
+func TestEpollEventsSupportsLevelTriggeredInterest(t *testing.T) {
+	events := epollEvents(poller.ReadyRead | poller.ReadyLevelTriggered)
+	if events&unix.EPOLLET != 0 {
+		t.Fatalf("events=%#x, do not want EPOLLET", events)
+	}
+	if events&unix.EPOLLIN == 0 {
+		t.Fatalf("events=%#x, want EPOLLIN", events)
 	}
 }
