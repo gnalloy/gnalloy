@@ -110,11 +110,9 @@ func writeDelimited(ctx *channel.HandlerContext, msg any, delimiter []byte, pass
 		}
 		if err := ctx.Write(in); err != nil {
 			delim.Release()
-			in.Release()
 			return err
 		}
 		if err := ctx.Write(delim); err != nil {
-			delim.Release()
 			return err
 		}
 		return nil

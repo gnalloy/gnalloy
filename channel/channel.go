@@ -32,6 +32,7 @@ type Channel interface {
 }
 
 // OutboundSink 是出站事件穿过 Pipeline 后的最终写出端。
+// Write 一经调用即接管消息所有权，返回错误时也必须完成释放或保留待关闭释放。
 type OutboundSink interface {
 	Write(msg any) error
 	Flush() error

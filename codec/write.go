@@ -5,20 +5,12 @@ import (
 	"gnalloy.org/gnalloy/channel"
 )
 
-// WriteOutboundBuffer 写出已完成编码的 ByteBuf；写失败时由当前 encoder 归还引用。
+// WriteOutboundBuffer 写出已完成编码的 ByteBuf，并把引用所有权转移给下游。
 func WriteOutboundBuffer(ctx *channel.HandlerContext, out buffer.ByteBuf) error {
-	if err := ctx.Write(out); err != nil {
-		out.Release()
-		return err
-	}
-	return nil
+	return ctx.Write(out)
 }
 
-// WriteOutboundBufferAndFlush 写出已完成编码的 ByteBuf 并立即 flush；写失败时由当前 encoder 归还引用。
+// WriteOutboundBufferAndFlush 写出已完成编码的 ByteBuf 并立即 flush，同时把引用所有权转移给下游。
 func WriteOutboundBufferAndFlush(ctx *channel.HandlerContext, out buffer.ByteBuf) error {
-	if err := ctx.WriteAndFlush(out); err != nil {
-		out.Release()
-		return err
-	}
-	return nil
+	return ctx.WriteAndFlush(out)
 }

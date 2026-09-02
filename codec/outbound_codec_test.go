@@ -20,6 +20,9 @@ type codecOutboundSink struct {
 func (s *codecOutboundSink) Write(msg any) error {
 	s.calls++
 	if s.writeErr != nil && s.calls == s.writeAt {
+		if out, ok := msg.(buffer.ByteBuf); ok {
+			out.Release()
+		}
 		return s.writeErr
 	}
 	s.writes = append(s.writes, msg)

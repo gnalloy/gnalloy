@@ -32,7 +32,6 @@ func (h *ChunkedWriteHandler) Write(ctx *channel.HandlerContext, msg any) error 
 		}
 		if chunk != nil && chunk.ReadableBytes() > 0 {
 			if err := ctx.Write(chunk); err != nil {
-				chunk.Release()
 				return err
 			}
 		} else if chunk != nil {

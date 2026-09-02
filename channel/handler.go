@@ -47,12 +47,14 @@ type ExceptionCaughtHandler interface {
 	ExceptionCaught(ctx *HandlerContext, err error)
 }
 
+// WriteHandler 处理出站消息；调用后消息所有权由实现接管，返回错误也不得交还上游。
 type WriteHandler interface {
 	Write(ctx *HandlerContext, msg any) error
 }
 
 // WriteAndFlushHandler 在一次出站调用中完成消息转换与 flush 传播。
 // 未实现该接口的处理器继续使用独立 Write 和 Flush 契约。
+// 调用后消息所有权由实现接管，返回错误也不得交还上游。
 type WriteAndFlushHandler interface {
 	WriteAndFlush(ctx *HandlerContext, msg any) error
 }

@@ -56,12 +56,10 @@ func (p *LengthFieldPrepender) Write(ctx *channel.HandlerContext, msg any) error
 		return err
 	}
 	if err := ctx.Write(header); err != nil {
-		header.Release()
 		in.Release()
 		return err
 	}
 	if err := ctx.Write(in); err != nil {
-		in.Release()
 		return err
 	}
 	return nil

@@ -148,7 +148,6 @@ func (e *FileRegionEncoder) Write(ctx *HandlerContext, msg any) error {
 				return err
 			}
 			if err := ctx.Write(out); err != nil {
-				out.Release()
 				return err
 			}
 		} else {

@@ -257,6 +257,9 @@ type failingOutboundSink struct {
 
 func (s *failingOutboundSink) Write(msg any) error {
 	s.writes = append(s.writes, msg)
+	if out, ok := msg.(buffer.ByteBuf); ok {
+		out.Release()
+	}
 	return s.err
 }
 

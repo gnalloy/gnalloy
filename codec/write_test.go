@@ -31,6 +31,9 @@ func (s *combinedWriteSink) Close() error    { return nil }
 func (s *combinedWriteSink) WriteAndFlush(message any) error {
 	s.calls++
 	s.message = message
+	if out, ok := message.(buffer.ByteBuf); ok {
+		out.Release()
+	}
 	return s.err
 }
 
@@ -48,10 +51,9 @@ func TestWriteOutboundBufferAndFlushUsesCombinedSink(t *testing.T) {
 	if sink.calls != 1 || sink.message != out {
 		t.Fatalf("calls=%d message=%T, want one combined write", sink.calls, sink.message)
 	}
-	out.Release()
 }
 
-func TestWriteOutboundBufferAndFlushReleasesOnFailure(t *testing.T) {
+func TestWriteOutboundBufferAndFlushTransfersOwnershipOnFailure(t *testing.T) {
 	wantErr := errors.New("write failed")
 	sink := &combinedWriteSink{err: wantErr}
 	ch := channel.NewLocalChannel(1, buffer.NewHeapAllocator(), sink)
