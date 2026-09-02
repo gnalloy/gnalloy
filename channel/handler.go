@@ -51,6 +51,12 @@ type WriteHandler interface {
 	Write(ctx *HandlerContext, msg any) error
 }
 
+// WriteAndFlushHandler 在一次出站调用中完成消息转换与 flush 传播。
+// 未实现该接口的处理器继续使用独立 Write 和 Flush 契约。
+type WriteAndFlushHandler interface {
+	WriteAndFlush(ctx *HandlerContext, msg any) error
+}
+
 type WriteFutureHandler interface {
 	WriteFuture(ctx *HandlerContext, msg any) Future
 }

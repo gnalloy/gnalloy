@@ -38,6 +38,7 @@ type HandlerContext struct {
 	userEventTriggered        UserEventTriggeredHandler
 	exceptionCaught           ExceptionCaughtHandler
 	write                     WriteHandler
+	writeAndFlush             WriteAndFlushHandler
 	writeFuture               WriteFutureHandler
 	flush                     FlushHandler
 	flushFuture               FlushFutureHandler
@@ -209,13 +210,27 @@ func (c *HandlerContext) Flush() error {
 }
 
 func (c *HandlerContext) WriteAndFlush(msg any) error {
-	if sink, ok := c.directWriteAndFlushSink(); ok {
-		return sink.WriteAndFlush(msg)
+	for n := c.prev; n != nil; n = n.prev {
+		if n.writeAndFlush != nil {
+			return n.writeAndFlush.WriteAndFlush(n, msg)
+		}
+		if n.write != nil || n.flush != nil {
+			if err := c.Write(msg); err != nil {
+				return err
+			}
+			return c.Flush()
+		}
 	}
-	if err := c.Write(msg); err != nil {
+	if c.pipeline.writeAndFlush != nil {
+		return c.pipeline.writeAndFlush.WriteAndFlush(msg)
+	}
+	if c.pipeline.sink == nil {
+		return ErrNoOutboundSink
+	}
+	if err := c.pipeline.sink.Write(msg); err != nil {
 		return err
 	}
-	return c.Flush()
+	return c.pipeline.sink.Flush()
 }
 
 // WriteStaticBytesAndFlush 写出不可变静态字节并立即 flush。
@@ -230,16 +245,6 @@ func (c *HandlerContext) WriteStaticBytesAndFlush(data []byte) error {
 		return sink.WriteStaticBytesAndFlush(data)
 	}
 	return c.WriteAndFlush(buffer.NewSharedBuffer(data))
-}
-
-func (c *HandlerContext) directWriteAndFlushSink() (writeAndFlushSink, bool) {
-	if c == nil || c.pipeline == nil || c.pipeline.writeAndFlush == nil {
-		return nil, false
-	}
-	if c.pipeline.outboundHandlers != 0 {
-		return nil, false
-	}
-	return c.pipeline.writeAndFlush, true
 }
 
 func (c *HandlerContext) directStaticBytesWriteAndFlushSink() (staticBytesWriteAndFlushSink, bool) {

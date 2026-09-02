@@ -19,6 +19,7 @@ func (c *HandlerContext) bindHandler(handler Handler) {
 	c.userEventTriggered, _ = handler.(UserEventTriggeredHandler)
 	c.exceptionCaught, _ = handler.(ExceptionCaughtHandler)
 	c.write, _ = handler.(WriteHandler)
+	c.writeAndFlush, _ = handler.(WriteAndFlushHandler)
 	c.writeFuture, _ = handler.(WriteFutureHandler)
 	c.flush, _ = handler.(FlushHandler)
 	c.flushFuture, _ = handler.(FlushFutureHandler)

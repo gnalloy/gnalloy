@@ -387,7 +387,7 @@ func (p *Pipeline) disableConcurrentWrite() {
 }
 
 func isOutboundContext(ctx *HandlerContext) bool {
-	return ctx != nil && (ctx.write != nil || ctx.flush != nil)
+	return ctx != nil && (ctx.write != nil || ctx.writeAndFlush != nil || ctx.flush != nil)
 }
 
 type headHandler struct{}

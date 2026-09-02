@@ -87,6 +87,16 @@ func (h *outboundRecorder) Flush(ctx *HandlerContext) error {
 	return ctx.Flush()
 }
 
+type combinedOutboundRecorder struct {
+	outboundRecorder
+	writeAndFlushes int
+}
+
+func (h *combinedOutboundRecorder) WriteAndFlush(ctx *HandlerContext, msg any) error {
+	h.writeAndFlushes++
+	return ctx.WriteAndFlush(msg)
+}
+
 type futureOutboundRecorder struct {
 	writes  int
 	flushes int
@@ -191,6 +201,24 @@ func TestPipelineWriteAndFlushPreservesOutboundHandlers(t *testing.T) {
 	}
 	if len(sink.writes) != 1 || sink.writes[0] != "payload" || !sink.flushed {
 		t.Fatalf("sink writes=%v flushed=%t, want separate path", sink.writes, sink.flushed)
+	}
+}
+
+func TestPipelineWriteAndFlushUsesCombinedOutboundHandler(t *testing.T) {
+	sink := &captureWriteAndFlushSink{}
+	ch := NewLocalChannel(1, buffer.NewHeapAllocator(), sink)
+	recorder := &combinedOutboundRecorder{}
+	if err := ch.Pipeline().AddLast("outbound", recorder); err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.Pipeline().WriteAndFlush("payload"); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.writeAndFlushes != 1 || recorder.writes != 0 || recorder.flushes != 0 {
+		t.Fatalf("combined=%d writes=%d flushes=%d, want 1/0/0", recorder.writeAndFlushes, recorder.writes, recorder.flushes)
+	}
+	if len(sink.writeAndFlushes) != 1 || sink.writeAndFlushes[0] != "payload" {
+		t.Fatalf("sink writeAndFlushes=%v, want payload", sink.writeAndFlushes)
 	}
 }
 
